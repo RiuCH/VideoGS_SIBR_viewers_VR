@@ -146,19 +146,21 @@ namespace sibr {
 		std::string folder;
 
 		int current_video_item = 0;
-		std::vector<const char*> video_path = {
+	std::vector<const char*> video_path = {
 			// "http://10.15.89.67:10000/wyw_hifivv/",
-			"http://10.15.89.67:10000/hanfu3_qp15/",
-			"http://10.15.89.67:10000/0923dancer3/",
-			"http://10.15.89.67:10000/jywq_demo/",
-			"http://10.15.89.67:10000/ykx_boxing_long_qp15/",
-			"http://10.15.89.67:10000/jywq_qp15/",
-			"http://10.15.89.67:10000/coser18_0503_qp15/",
-			"http://10.15.89.67:10000/png_all_0/", 
-			"http://10.15.89.67:10000/coser18_qp15_new/", 
-			"http://10.15.89.67:10000/coser18_0503_qp0/", 
-			"http://10.15.89.67:10000/1015hanfu_qp0/", 
-			"http://10.15.89.67:10000/coser18_qp0_new/"
+			// "http://10.15.89.67:10000/hanfu3_qp15/",
+			// "http://10.15.89.67:10000/0923dancer3/",
+			// "http://10.15.89.67:10000/jywq_demo/",
+			// "http://10.15.89.67:10000/ykx_boxing_long_qp15/",
+			// "http://10.15.89.67:10000/jywq_qp15/",
+			// "http://10.15.89.67:10000/coser18_0503_qp15/",
+			// "http://10.15.89.67:10000/png_all_0/", 
+			// "http://10.15.89.67:10000/coser18_qp15_new/", 
+			// "http://10.15.89.67:10000/coser18_0503_qp0/", 
+			// "http://10.15.89.67:10000/1015hanfu_qp0/", 
+			// "http://10.15.89.67:10000/coser18_qp0_new/"
+			"http://127.0.0.1/png_all_25/"
+
 		};
 		std::vector<int> video_sh = {
 			// 0,
