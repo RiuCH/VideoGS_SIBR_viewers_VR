@@ -39,21 +39,35 @@ bool getAllFrames(std::string filename, std::vector<cv::Mat>& frames) {
 bool getAllFramesNew(std::string filename, int vector_start_index, std::vector<cv::Mat>& frames) {
     cv::VideoCapture cap(filename);
     if (!cap.isOpened()) {
-        std::cerr << "Error opening video file" << std::endl;
+        std::cerr << "Error opening video file: " << filename << std::endl;
         return false;
     }
+    
     int index = vector_start_index;
+    int frame_count = 0;
+    
     while (true) {
         cv::Mat frame, frame8;
         cap >> frame;
         if (frame.empty()) {
             break;
         }
+        
+        // CRITICAL FIX: Add bounds checking
+        if (index >= frames.size()) {
+            std::cerr << "ERROR: Attempting to write beyond vector bounds! " 
+                      << "Index: " << index << ", Size: " << frames.size() 
+                      << ", File: " << filename << std::endl;
+            return false;
+        }
+        
         cv::cvtColor(frame, frame8, cv::COLOR_BGR2GRAY);
-        // frames.push_back(frame8.clone());
         frames[index] = frame8.clone();
         index++;
+        frame_count++;
     }
-
+    
+    std::cout << "Successfully loaded " << frame_count << " frames starting at index " 
+              << vector_start_index << " for " << filename << std::endl;
     return true;
 }

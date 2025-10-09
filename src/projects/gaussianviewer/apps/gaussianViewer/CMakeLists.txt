@@ -26,6 +26,7 @@ target_link_libraries(${PROJECT_NAME}
 	${OPENGL_LIBRARIES}
 	${OpenCV_LIBRARIES}
 	OpenMP::OpenMP_CXX
+	sibr_openxr
 	sibr_gaussian
 	sibr_view
 	sibr_assets

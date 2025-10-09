@@ -18,7 +18,7 @@ Please note that the SIBR viewer is only tested on Ubuntu, maybe not work for ot
 sudo apt install -y libglew-dev libassimp-dev libboost-all-dev libgtk-3-dev libopencv-dev libglfw3-dev libavdevice-dev libavcodec-dev libeigen3-dev libxxf86vm-dev libembree-dev libcurl4-openssl-dev ffmpeg ninja-build
 # Project setup
 cd VideoGS_SIBR_viewers
-cmake -Bbuild . -DCMAKE_BUILD_TYPE=Release # add -G Ninja to build faster
+cmake -Bbuild . -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90" -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++ -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
 cmake --build build -j24 --target install
 ```
 
@@ -30,9 +30,17 @@ Then modify the network address in `src/projects/gaussianviewer/renderer/Gaussia
 
 Command:
 ```
-./install/bin/SIBR_gaussianViewer_app -m xxx(Path to the frame 0 ckpt)
+./install/bin/SIBR_gaussianViewer_app  --appPath $(pwd)/install \
+    -m <path to fram 0 ckpt> \
+    --rendering-mode 2 \
+    --rendering-size 4128 2208
+    )
 ```
 You need to pass the first frame ckpt to the viewer, as the viewer needs the camera.json to initialize the view. 
+
+For Linux use, use WiVRm to render dynamic 3DGS to VR headset
+
+https://github.com/WiVRn/WiVRn?tab=readme-ov-file
 
 ## Control
 

@@ -100,6 +100,22 @@ bool image_dequan(cv::Mat m_att_img, std::vector<float>& gaussian_vector, float 
 // Load the Gaussians from the given png.
 void sibr::GaussianView::loadVideo_func(int frame_index)
 {
+	// CRITICAL: Add bounds checking for frame_index
+	if (frame_index < 0 || frame_index >= sequences_length) {
+		std::cerr << "ERROR: Invalid frame_index " << frame_index 
+		          << " (valid range: 0-" << sequences_length - 1 << ")" << std::endl;
+		return;
+	}
+	
+	// Check if global_png_vector has data for this frame
+	for (int att_idx = 0; att_idx < num_att_index; ++att_idx) {
+		if (frame_index >= global_png_vector[att_idx].size()) {
+			std::cerr << "ERROR: Frame " << frame_index << " not available in global_png_vector[" 
+			          << att_idx << "] (size: " << global_png_vector[att_idx].size() << ")" << std::endl;
+			return;
+		}
+	}
+	
 	// int json_index = frame_index % 101;
 	int json_index = frame_index;
 	int shs_dim = 3 * (_sh_degree + 1) * (_sh_degree + 1);
@@ -192,6 +208,15 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 	// std::cout << "Debuggggggggggg" << std::endl;
 
 	start = std::chrono::high_resolution_clock::now();
+	// Add a check to ensure gaussian_data has enough elements
+	for(int i = 0; i < ply_dim - 3; ++i) {
+		if (gaussian_data[i].size() < m_count) {
+			std::cerr << "ERROR: Not enough data for attribute " << i << " in frame " << frame_index 
+					  << ". Expected at least " << m_count << " elements, but got " << gaussian_data[i].size() << "." << std::endl;
+			// You might want to handle this error more gracefully, e.g., by returning or throwing an exception
+			return; 
+		}
+	}
 	for (size_t index = 0; index < m_count; index++) {
 		// preprocessed
 		pos[index].x() = gaussian_data[0][index];
@@ -232,6 +257,7 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&shs_cuda_array[cnt], sizeof(SHs<3>) * m_count));
 	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(shs_cuda_array[cnt], shs.data(), sizeof(SHs<3>) * m_count, cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&rect_cuda_array[cnt], 2 * m_count * sizeof(int)));
+	CUDA_SAFE_CALL_ALWAYS(cudaMemset(rect_cuda_array[cnt], 0, 2 * m_count * sizeof(int)));
 	P_array[frame_index] = m_count;
 	end = std::chrono::high_resolution_clock::now();
 	elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -284,6 +310,7 @@ unsigned long long getNetReceivedBytes() {
 
 namespace sibr
 {
+	static float s_fps = 30.0f; // Frames per second for video playback
 	// A simple copy renderer class. Much like the original, but this one
 	// reads from a buffer instead of a texture and blits the result to
 	// a render target. 
@@ -373,16 +400,13 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	CUDA_SAFE_CALL_ALWAYS(cudaSetDevice(device));
 	cudaDeviceProp prop;
 	CUDA_SAFE_CALL_ALWAYS(cudaGetDeviceProperties(&prop, device));
-	// if (prop.major < 7)
-	// {
-	// 	SIBR_ERR << "Sorry, need at least compute capability 7.0+!";
-	// }
+ 
 
 	_pointbasedrenderer.reset(new PointBasedRenderer());
 	_copyRenderer = new BufferCopyRenderer();
 	_copyRenderer->flip() = true;
-	_copyRenderer->width() = render_w;
-	_copyRenderer->height() = render_h;
+	_copyRenderer->width() = _resolution.x();
+	_copyRenderer->height() = _resolution.y();
 
 	std::vector<uint> imgs_ulr;
 	const auto & cams = ibrScene->cameras()->inputCameras();
@@ -493,52 +517,150 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	rect_cuda = rect_cuda_array[0];
 
 	_gaussianRenderer = new GaussianSurfaceRenderer();
-
-	// Create GL buffer ready for CUDA/GL interop
-	glCreateBuffers(1, &imageBuffer);
-	glNamedBufferStorage(imageBuffer, render_w * render_h * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
-
-	if (useInterop)
-	{
-		if (cudaPeekAtLastError() != cudaSuccess)
-		{
-			SIBR_ERR << "A CUDA error occurred in setup:" << cudaGetErrorString(cudaGetLastError()) << ". Please rerun in Debug to find the exact line!";
-		}
-		cudaGraphicsGLRegisterBuffer(&imageBufferCuda, imageBuffer, cudaGraphicsRegisterFlagsWriteDiscard);
-		useInterop &= (cudaGetLastError() == cudaSuccess);
-	}
-	if (!useInterop)
-	{
-		fallback_bytes.resize(render_w * render_h * 3 * sizeof(float));
-		cudaMalloc(&fallbackBufferCuda, fallback_bytes.size());
-		_interop_failed = true;
-	}
-
+	createImageBuffer();
 	geomBufferFunc = resizeFunctional(&geomPtr, allocdGeom);
 	binningBufferFunc = resizeFunctional(&binningPtr, allocdBinning);
 	imgBufferFunc = resizeFunctional(&imgPtr, allocdImg);
+}
 
-	download_thread_ = std::thread(&sibr::GaussianView::download_func, this);
-	std::lock_guard<std::mutex> lock(mtx_ready);
-	for (int group_index = 1; group_index < group_frame_index.size(); group_index++) {
-		need_download_q.push(group_index);
+void sibr::GaussianView::setResolution(const Vector2i &size)
+{
+	if (size != getResolution())
+	{
+		SIBR_LOG << "Set resolution => " << size << std::endl;
+		ViewBase::setResolution(size);
+		destroyImageBuffer();
+		createImageBuffer();
+
+		_copyRenderer->width() = _resolution.x();
+		_copyRenderer->height() = _resolution.y();
 	}
-	cv_download.notify_one();
+}
 
-	ready_thread_ = std::thread(&sibr::GaussianView::readyVideo_func, this);
+void sibr::GaussianView::createImageBuffer()
+{
+	try {
+		// Create GL buffer ready for CUDA/GL interop
+		glCreateBuffers(1, &imageBuffer);
+		glNamedBufferStorage(imageBuffer, _resolution.x() * _resolution.y() * 3 * sizeof(float), nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-	// set up time recoder for stable play speed
-	frameDuration = std::chrono::milliseconds(33);
-	lastUpdateTimestamp = std::chrono::high_resolution_clock::now();
+		if (_use_interop)
+		{
+			if (cudaPeekAtLastError() != cudaSuccess)
+			{
+				SIBR_ERR << "A CUDA error occurred in setup:" << cudaGetErrorString(cudaGetLastError()) << ". Please rerun in Debug to find the exact line!";
+			}
+			cudaGraphicsGLRegisterBuffer(&imageBufferCuda, imageBuffer, cudaGraphicsRegisterFlagsWriteDiscard);
+			_use_interop &= (cudaGetLastError() == cudaSuccess);
+		}
+		if (!_use_interop)
+		{
+			fallback_bytes.resize(_resolution.x() * _resolution.y() * 3 * sizeof(float));
+			cudaMalloc(&fallbackBufferCuda, fallback_bytes.size());
+			_interop_failed = true;
+		}
 
-	// set up time recoder for memory read
-	MemframeDuration = std::chrono::milliseconds(1000);
-	MemlastUpdateTimestamp = std::chrono::high_resolution_clock::now();
+		// geomBufferFunc = resizeFunctional(&geomPtr, allocdGeom);
+		// binningBufferFunc = resizeFunctional(&binningPtr, allocdBinning);
+		// imgBufferFunc = resizeFunctional(&imgPtr, allocdImg);
 
-	// read network
-	last_total_bytes = getNetReceivedBytes();
+		// Check system resources before creating threads
+		if (!checkSystemResources()) {
+			throw std::runtime_error("System resource check failed: Insufficient resources to continue.");
+		}
+		
+		// Safely create/restart threads with proper exception handling
+		std::lock_guard<std::mutex> thread_lock(_thread_management_mutex);
+		try {
+			// Check if threads are already running and stop them properly
+			if (download_thread_.joinable()) {
+				frame_changed = true; // Signal threads to stop
+				cv_download.notify_all();
+				download_thread_.join();
+			}
+			if (ready_thread_.joinable()) {
+				cv_ready.notify_all();
+				ready_thread_.join();
+			}
+			
+			// Reset frame_changed flag
+			frame_changed = false;
+			
+			// Create new threads
+			download_thread_ = std::thread(&sibr::GaussianView::download_func, this);
+			
+			{
+				std::lock_guard<std::mutex> lock(mtx_ready);
+				for (int group_index = 1; group_index < group_frame_index.size(); group_index++) {
+					need_download_q.push(group_index);
+				}
+			}
+			cv_download.notify_one();
+
+			ready_thread_ = std::thread(&sibr::GaussianView::readyVideo_func, this);
+			
+			// Mark threads as successfully initialized
+			_threads_initialized = true;
+			
+		} catch (const std::system_error& e) {
+			SIBR_ERR << "Failed to create worker threads: " << e.what() << ". Code: " << e.code() << std::endl;
+			// Continue without threads if creation fails
+		} catch (const std::exception& e) {
+			SIBR_ERR << "Exception during thread creation: " << e.what() << std::endl;
+		}
+
+		// set up time recoder for stable play speed
+		frameDuration = std::chrono::milliseconds(33);
+		lastUpdateTimestamp = std::chrono::high_resolution_clock::now();
+
+		// set up time recoder for memory read
+		MemframeDuration = std::chrono::milliseconds(1000);
+		MemlastUpdateTimestamp = std::chrono::high_resolution_clock::now();
+
+		// read network
+		last_total_bytes = getNetReceivedBytes();
 
 	// std::cout << "the number of 0 gaussian" << count << std::endl;
+	} catch (const std::exception& e) {
+		SIBR_ERR << "Exception in createImageBuffer: " << e.what() << std::endl;
+		throw; // Re-throw to allow proper error handling upstream
+	}
+}
+
+bool sibr::GaussianView::checkSystemResources()
+{
+	try {
+		// Check available system threads
+		unsigned int hardware_threads = std::thread::hardware_concurrency();
+		if (hardware_threads == 0) {
+			SIBR_LOG << "Warning: Cannot determine number of hardware threads" << std::endl;
+			return true; // Continue anyway
+		}
+		
+		SIBR_LOG << "System has " << hardware_threads << " hardware threads available" << std::endl;
+		
+		// Basic memory check using sysinfo (Linux)
+		#ifdef __linux__
+			struct sysinfo info;
+			if (sysinfo(&info) == 0) {
+				unsigned long available_ram = info.freeram * info.mem_unit;
+				unsigned long total_ram = info.totalram * info.mem_unit;
+				SIBR_LOG << "Available RAM: " << available_ram / (1024*1024) << " MB / " 
+				          << total_ram / (1024*1024) << " MB total" << std::endl;
+				          
+				// Check if we have at least 1GB available
+				if (available_ram < 1024*1024*1024) {
+					SIBR_ERR << "Warning: Low memory available (< 1GB). This may cause issues." << std::endl;
+				}
+			}
+		#endif
+		
+		return true;
+		
+	} catch (const std::exception& e) {
+		SIBR_ERR << "Exception during system resource check: " << e.what() << std::endl;
+		return false;
+	}
 }
 
 // void sibr::GaussianView::download_func() {
@@ -655,6 +777,61 @@ void sibr::GaussianView::download_func() {
 	}
 }
 
+void sibr::GaussianView::destroyImageBuffer()
+{
+	try {
+		// Signal threads to stop and clean up properly
+		frame_changed = true;
+		
+		// Wake up threads and wait for them to finish
+		cv_download.notify_all();
+		cv_ready.notify_all();
+		
+		// Join threads with timeout to avoid hanging
+		if (download_thread_.joinable()) {
+			try {
+				download_thread_.join();
+			} catch (const std::exception& e) {
+				SIBR_ERR << "Exception joining download thread: " << e.what() << std::endl;
+				// If join fails, detach to prevent termination
+				download_thread_.detach();
+			}
+		}
+		
+		if (ready_thread_.joinable()) {
+			try {
+				ready_thread_.join();
+			} catch (const std::exception& e) {
+				SIBR_ERR << "Exception joining ready thread: " << e.what() << std::endl;
+				// If join fails, detach to prevent termination
+				ready_thread_.detach();
+			}
+		}
+		
+		// Clean up GPU resources
+		if (_use_interop)
+		{
+			cudaGraphicsUnregisterResource(imageBufferCuda);
+		}
+		else
+		{
+			cudaFree(fallbackBufferCuda);
+		}
+		glDeleteBuffers(1, &imageBuffer);
+		imageBuffer = 0;
+		
+	} catch (const std::exception& e) {
+		SIBR_ERR << "Exception in destroyImageBuffer: " << e.what() << std::endl;
+		// Continue cleanup even if exceptions occur
+		try {
+			glDeleteBuffers(1, &imageBuffer);
+			imageBuffer = 0;
+		} catch (...) {
+			// Ignore further exceptions during emergency cleanup
+		}
+	}
+}
+
 void sibr::GaussianView::setScene(const sibr::BasicIBRScene::Ptr & newScene)
 {
 	_scene = newScene;
@@ -672,6 +849,12 @@ void sibr::GaussianView::setScene(const sibr::BasicIBRScene::Ptr & newScene)
 
 void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Camera & eye)
 {
+	if (count <= 0) {
+		// Clear the destination to black to avoid showing the previous frame's image.
+        dst.clear(); // Clear screen
+        return;
+	}
+
 	if (currMode == "Ellipsoids")
 	{
 		// stop ellipsoid rendering to avoid loading gData
@@ -713,9 +896,49 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			image_cuda = fallbackBufferCuda;
 		}
 
+		// Validate parameters before CUDA call
+		if (count <= 0 || _resolution.x() <= 0 || _resolution.y() <= 0) {
+			SIBR_ERR << "Invalid parameters: count=" << count 
+			         << ", resolution=" << _resolution.x() << "x" << _resolution.y() << std::endl;
+			return;
+		}
+		
+		// Check for null required pointers
+		if (!pos_cuda || !opacity_cuda || !scale_cuda || !rot_cuda || !view_cuda || 
+		    !proj_cuda || !cam_pos_cuda || !background_cuda || !image_cuda) {
+			SIBR_ERR << "Null pointer detected in CUDA parameters" << std::endl;
+			return;
+		}
+		
 		// Rasterize
 		int* rects = _fastCulling ? rect_cuda : nullptr;
+
+		// Clear any previous CUDA errors.
+		cudaGetLastError(); 
 		// std::cout << "Rendering resolution: " << _resolution.x() << "x" << _resolution.y() << "x" << std::endl;
+
+		// // --- BEGIN DEBUG BLOCK ---
+		// std::cout << "\n--- DEBUG: Values before Rasterizer::forward ---" << std::endl;
+		// std::cout << "count: " << count << std::endl;
+		// std::cout << "_sh_degree: " << _sh_degree << std::endl;
+		// std::cout << "Resolution: " << _resolution.x() << " x " << _resolution.y() << std::endl;
+		// std::cout << "_scalingModifier: " << _scalingModifier << std::endl;
+		// std::cout << "tan_fovx: " << tan_fovx << std::endl;
+		// std::cout << "tan_fovy: " << tan_fovy << std::endl;
+
+		// // Check for null pointers which can cause crashes
+		// std::cout << "Pointer Checks:" << std::endl;
+		// std::cout << "  pos_cuda: " << (pos_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  shs_cuda: " << (shs_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  opacity_cuda: " << (opacity_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  scale_cuda: " << (scale_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  rot_cuda: " << (rot_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  view_cuda: " << (view_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  proj_cuda: " << (proj_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  cam_pos_cuda: " << (cam_pos_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "  image_cuda: " << (image_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
+		// std::cout << "------------------------------------------------\n" << std::endl;
+
 		CudaRasterizer::Rasterizer::forward(
 			geomBufferFunc,
 			binningBufferFunc,
@@ -741,6 +964,22 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			nullptr,
 			rects
 		);
+	cudaError_t err = cudaPeekAtLastError();
+	if (err == cudaErrorInvalidConfiguration) 
+	{
+
+		cudaGetLastError(); 
+	} 
+	else if (err != cudaSuccess) 
+	{
+		SIBR_ERR << "CUDA error after Rasterizer::forward: " << cudaGetErrorString(err) << std::endl;
+	}
+		
+cudaDeviceSynchronize();
+		err = cudaPeekAtLastError();
+		if (err != cudaSuccess) {
+			SIBR_ERR << "CUDA error after Rasterizer::forward: " << cudaGetErrorString(err) << std::endl;
+		}
 
 		if (!_interop_failed)
 		{
@@ -764,6 +1003,56 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 
 void sibr::GaussianView::onUpdate(Input & input)
 {
+    // Update frame duration based on FPS slider from GUI
+	frameDuration = std::chrono::milliseconds((int)(1000.0f / s_fps));
+
+	auto now = std::chrono::high_resolution_clock::now();
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdateTimestamp);
+
+	if (_multi_view_play) {
+		if (ready_array[frame_id + 1] == 1) {
+			if (elapsed > frameDuration) {
+				frame_id += 1;
+				if (frame_id >= sequences_length) {
+					_multi_view_play = false;
+				}
+				lastUpdateTimestamp = now;
+
+				// Free the memory of the previous frame that is no longer needed
+				if (frame_id - 1 >= 0) {
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[frame_id - 1]));
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[frame_id - 1]));
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[frame_id - 1]));
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[frame_id - 1]));
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[frame_id - 1]));
+					CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[frame_id - 1]));
+					ready_array[frame_id - 1] = 0;
+				}
+			}
+		}
+	}
+    
+    // After any potential frame_id change, update the active pointers for rendering.
+    // This ensures onRenderIBR uses the correct frame's data.
+    if (frame_id < sequences_length) {
+		// IMPROVED LOGIC HERE
+        if (ready_array[frame_id] == 1 && P_array[frame_id] > 0) {
+			count = P_array[frame_id];
+			pos_cuda = pos_cuda_array[frame_id];
+			rot_cuda = rot_cuda_array[frame_id];
+			scale_cuda = scale_cuda_array[frame_id];
+			opacity_cuda = opacity_cuda_array[frame_id];
+			shs_cuda = shs_cuda_array[frame_id];
+			rect_cuda = rect_cuda_array[frame_id];
+		} else {
+			// This frame is not ready or has no Gaussians.
+			// Explicitly set the count to 0 to prevent rendering.
+			count = 0;
+		}
+    } else {
+		// Frame is out of bounds.
+		count = 0;
+	}
 }
 
 void sibr::GaussianView::onGUI()
@@ -789,6 +1078,7 @@ void sibr::GaussianView::onGUI()
 	}
 
 	ImGui::Begin("Play");
+		ImGui::SliderFloat("FPS", &s_fps, 1.0f, 120.0f); // Add FPS slider
 		ImGui::Checkbox("multi view play", &_multi_view_play);
 		if (ImGui::SliderInt("Playing Frame", &frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
 			std::cout << "frame_id changed to " << frame_id << std::endl;
@@ -1008,41 +1298,41 @@ void sibr::GaussianView::onGUI()
 		std::cout << "video changed to " << folder << " done" << std::endl;
 	}
 
-	auto now = std::chrono::high_resolution_clock::now();
-	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdateTimestamp);
+	// auto now = std::chrono::high_resolution_clock::now();
+	// auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdateTimestamp);
 
-	if (_multi_view_play) {
-		// if (frame_id + 1 <= ready_frames) {
-		if (ready_array[frame_id + 1] == 1) {
-			if (elapsed > frameDuration) {
-				frame_id += 1;
-				if (frame_id >= sequences_length) {
-					_multi_view_play = false;
-				}
-				lastUpdateTimestamp = now;
-				if (frame_id - 1 >= 0) {
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[frame_id - 1]));
-					// set ready to 0
-					ready_array[frame_id - 1] = 0;
-				}
-			}
-		}
-	}
-	if (frame_id >= sequences_length) {
-		_multi_view_play = false;
-	}
-	count = P_array[frame_id];
-	pos_cuda = pos_cuda_array[frame_id];
-	rot_cuda = rot_cuda_array[frame_id];
-	scale_cuda = scale_cuda_array[frame_id];
-	opacity_cuda = opacity_cuda_array[frame_id];
-	shs_cuda = shs_cuda_array[frame_id];
-	rect_cuda = rect_cuda_array[frame_id];
+	// if (_multi_view_play) {
+	// 	// if (frame_id + 1 <= ready_frames) {
+	// 	if (ready_array[frame_id + 1] == 1) {
+	// 		if (elapsed > frameDuration) {
+	// 			frame_id += 1;
+	// 			if (frame_id >= sequences_length) {
+	// 				_multi_view_play = false;
+	// 			}
+	// 			lastUpdateTimestamp = now;
+	// 			if (frame_id - 1 >= 0) {
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[frame_id - 1]));
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[frame_id - 1]));
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[frame_id - 1]));
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[frame_id - 1]));
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[frame_id - 1]));
+	// 				CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[frame_id - 1]));
+	// 				// set ready to 0
+	// 				ready_array[frame_id - 1] = 0;
+	// 			}
+	// 		}
+	// 	}
+	// }
+	// if (frame_id >= sequences_length) {
+	// 	_multi_view_play = false;
+	// }
+	// count = P_array[frame_id];
+	// pos_cuda = pos_cuda_array[frame_id];
+	// rot_cuda = rot_cuda_array[frame_id];
+	// scale_cuda = scale_cuda_array[frame_id];
+	// opacity_cuda = opacity_cuda_array[frame_id];
+	// shs_cuda = shs_cuda_array[frame_id];
+	// rect_cuda = rect_cuda_array[frame_id];
 	ImGui::Checkbox("Fast culling", &_fastCulling);
 
 	// visualize the data png
@@ -1130,48 +1420,101 @@ void sibr::GaussianView::onGUI()
 
 sibr::GaussianView::~GaussianView()
 {
-	for (int i = 0; i < sequences_length; i++) {
-		if (ready_array[i] == 1) {
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[i]));
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[i]));
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[i]));
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[i]));
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[i]));
-			CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[i]));
+	try {
+		// Clean up array resources
+		for (int i = 0; i < sequences_length; i++) {
+			if (ready_array[i] == 1) {
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[i]));
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[i]));
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[i]));
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[i]));
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[i]));
+				CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[i]));
+			}
+		}
+		
+		// Properly stop threads before destruction
+		frame_changed = true;
+		cv_download.notify_all();
+		cv_ready.notify_all();
+		
+		// Try to join threads first, fallback to detach if needed
+		try {
+			if (download_thread_.joinable()) {
+				// Give thread a reasonable time to finish
+				auto future = std::async(std::launch::async, [&] {
+					download_thread_.join();
+				});
+				if (future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+					SIBR_LOG << "Download thread did not finish in time, detaching..." << std::endl;
+					download_thread_.detach();
+				}
+			}
+		} catch (const std::exception& e) {
+			SIBR_ERR << "Exception handling download thread in destructor: " << e.what() << std::endl;
+			if (download_thread_.joinable()) {
+				download_thread_.detach();
+			}
+		}
+		
+		try {
+			if (ready_thread_.joinable()) {
+				// Give thread a reasonable time to finish
+				auto future = std::async(std::launch::async, [&] {
+					ready_thread_.join();
+				});
+				if (future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+					SIBR_LOG << "Ready thread did not finish in time, detaching..." << std::endl;
+					ready_thread_.detach();
+				}
+			}
+		} catch (const std::exception& e) {
+			SIBR_ERR << "Exception handling ready thread in destructor: " << e.what() << std::endl;
+			if (ready_thread_.joinable()) {
+				ready_thread_.detach();
+			}
+		}
+		
+		// CUDA cleanup
+		cudaFree(pos_cuda);
+		cudaFree(rot_cuda);
+		cudaFree(scale_cuda);
+		cudaFree(opacity_cuda);
+		cudaFree(shs_cuda);
+
+		cudaFree(view_cuda);
+		cudaFree(proj_cuda);
+		cudaFree(cam_pos_cuda);
+		cudaFree(background_cuda);
+		cudaFree(rect_cuda);
+
+		if (!_interop_failed)
+		{
+			cudaGraphicsUnregisterResource(imageBufferCuda);
+		}
+		else
+		{
+			cudaFree(fallbackBufferCuda);
+		}
+		glDeleteBuffers(1, &imageBuffer);
+
+		if (geomPtr)
+			cudaFree(geomPtr);
+		if (binningPtr)
+			cudaFree(binningPtr);
+		if (imgPtr)
+			cudaFree(imgPtr);
+
+		delete _copyRenderer;
+		
+	} catch (const std::exception& e) {
+		SIBR_ERR << "Exception in GaussianView destructor: " << e.what() << std::endl;
+		// Continue with emergency cleanup
+		try {
+			if (download_thread_.joinable()) download_thread_.detach();
+			if (ready_thread_.joinable()) ready_thread_.detach();
+		} catch (...) {
+			// Ignore further exceptions in destructor
 		}
 	}
-	frame_changed = true;
-	download_thread_.detach();
-	ready_thread_.detach();
-	// Cleanup
-	cudaFree(pos_cuda);
-	cudaFree(rot_cuda);
-	cudaFree(scale_cuda);
-	cudaFree(opacity_cuda);
-	cudaFree(shs_cuda);
-
-	cudaFree(view_cuda);
-	cudaFree(proj_cuda);
-	cudaFree(cam_pos_cuda);
-	cudaFree(background_cuda);
-	cudaFree(rect_cuda);
-
-	if (!_interop_failed)
-	{
-		cudaGraphicsUnregisterResource(imageBufferCuda);
-	}
-	else
-	{
-		cudaFree(fallbackBufferCuda);
-	}
-	glDeleteBuffers(1, &imageBuffer);
-
-	if (geomPtr)
-		cudaFree(geomPtr);
-	if (binningPtr)
-		cudaFree(binningPtr);
-	if (imgPtr)
-		cudaFree(imgPtr);
-
-	delete _copyRenderer;
 }

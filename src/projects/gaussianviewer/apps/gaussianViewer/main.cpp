@@ -14,6 +14,7 @@
 #include <core/graphics/Window.hpp>
 #include <core/view/MultiViewManager.hpp>
 #include <core/system/String.hpp>
+#include <core/openxr/OpenXRRdrMode.hpp>
 #include "projects/gaussianviewer/renderer/GaussianView.hpp" 
 
 #include <core/renderer/DepthRenderer.hpp>
@@ -226,8 +227,16 @@ int main(int ac, char** av)
 	// Add views to mvm.
 	MultiViewManager        multiViewManager(window, false);
 
-	if (myArgs.rendering_mode == 1) 
-		multiViewManager.renderingMode(IRenderingMode::Ptr(new StereoAnaglyphRdrMode()));
+	switch (myArgs.rendering_mode) {
+		case 1:
+			multiViewManager.renderingMode(IRenderingMode::Ptr(new StereoAnaglyphRdrMode()));
+			break;
+		case 2:
+			multiViewManager.renderingMode(IRenderingMode::Ptr(new OpenXRRdrMode(window)));
+			break;
+		default:
+			break;
+	}
 	
 	multiViewManager.addIBRSubView("Point view", gaussianView, usedResolution, ImGuiWindowFlags_ResizeFromAnySide | ImGuiWindowFlags_NoBringToFrontOnFocus);
 	multiViewManager.addCameraForView("Point view", generalCamera);

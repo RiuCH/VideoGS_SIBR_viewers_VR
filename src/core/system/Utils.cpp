@@ -33,6 +33,7 @@
 	#include <unistd.h>
 	#include <sys/types.h>
 	#include <pwd.h>
+	#include <cstring>
 #endif
 
 namespace sibr
@@ -323,34 +324,41 @@ namespace sibr
 
 	SIBR_SYSTEM_EXPORT std::string getInstallDirectory()
 	{
-		char exePath[4095];
-
 #ifdef SIBR_OS_WINDOWS 
+		char exePath[4095];
 		unsigned int len = GetModuleFileNameA(GetModuleHandleA(0x0), exePath, MAX_PATH);
-
 		std::string installDirectory = parentDirectory(parentDirectory(exePath));
 #else
-		unsigned int len=0;
-
+		// Use a safer approach with proper error handling
 		char result[PATH_MAX];
-		ssize_t c = readlink("/proc/self/exe", result, PATH_MAX);
-		len = c;
-		const char* path;
-		if( c != -1 )
-			path = dirname(result);
-		else
-			SIBR_ERR  << "Cant find executable path  "<< std::endl;
-
-
-		std::string installDirectory(parentDirectory(path));
+		ssize_t c = readlink("/proc/self/exe", result, PATH_MAX-1);
+		
+		if(c == -1 || c >= PATH_MAX-1) {
+			SIBR_ERR << "Can't find executable path" << std::endl;
+			return ".";
+		}
+		
+		result[c] = '\0'; // null terminate
+		
+		// Convert to string and use string operations to avoid buffer issues
+		std::string exePath(result);
+		size_t lastSlash = exePath.find_last_of('/');
+		if(lastSlash == std::string::npos) {
+			SIBR_ERR << "Invalid executable path format" << std::endl;
+			return ".";
+		}
+		
+		std::string binDir = exePath.substr(0, lastSlash);  // directory containing the exe
+		std::string installDirectory = parentDirectory(binDir);
+		unsigned int len = c;
 #endif
 
-		if (len == 0 && 
-		!directoryExists(installDirectory + "/bin")) // memory not sufficient or general error occured
-		{
-			SIBR_ERR << "Can't find install folder! Please specify as command-line option using --appPath option!" << std::endl;
-		}
-		return installDirectory;
+	if (len == 0 && 
+	!directoryExists(installDirectory + "/bin")) // memory not sufficient or general error occured
+	{
+		SIBR_ERR << "Can't find install folder! Please specify as command-line option using --appPath option!" << std::endl;
+	}
+	return installDirectory;
 	}
 
 	SIBR_SYSTEM_EXPORT std::string getBinDirectory()

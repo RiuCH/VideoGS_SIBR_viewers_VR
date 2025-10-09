@@ -35,6 +35,11 @@
 # include <condition_variable>
 #include <picojson/picojson.hpp>
 #include "GPUMemoryInfo.hpp"
+#include <atomic>
+#include <future>
+#ifdef __linux__
+#include <sys/sysinfo.h>
+#endif
 
 #define SEQUENCE_LENGTH 2000
 
@@ -93,6 +98,8 @@ namespace sibr {
 
 		virtual ~GaussianView() override;
 
+		void setResolution(const Vector2i& size) override;
+
 		bool* _dontshow;
 
 		void download_func();
@@ -108,6 +115,11 @@ namespace sibr {
 		int frame_id = 0;
 		bool _fastCulling = true;
 		int _device = 0;
+		
+		// Thread safety and resource management
+		std::atomic<bool> _threads_initialized{false};
+		std::mutex _thread_management_mutex;
+		bool checkSystemResources();
 		int num_att_index = 29;
 		int sequences_length = 0;
 
@@ -159,7 +171,9 @@ namespace sibr {
 			// "http://10.15.89.67:10000/coser18_0503_qp0/", 
 			// "http://10.15.89.67:10000/1015hanfu_qp0/", 
 			// "http://10.15.89.67:10000/coser18_qp0_new/"
-			"http://127.0.0.1/png_all_25/"
+			"http://127.0.0.1/png_all_25/",
+			"http://127.0.0.1/png_all_50/",
+			"http://127.0.0.1/ykx_boxing_long_qp15_380/"
 
 		};
 		std::vector<int> video_sh = {
@@ -207,7 +221,7 @@ namespace sibr {
 		std::thread download_thread_;
 		std::thread ready_thread_;
 
-		GLuint imageBuffer;
+		GLuint imageBuffer = 0;
 		cudaGraphicsResource_t imageBufferCuda;
 
 		size_t allocdGeom = 0, allocdBinning = 0, allocdImg = 0;
@@ -224,6 +238,7 @@ namespace sibr {
 		GaussianData* gData_array[500];
 		// bool _multi_view_play = true;
 		bool _multi_view_play = false;
+		bool _use_interop = true;
 		bool _interop_failed = false;
 		std::vector<char> fallback_bytes;
 		float* fallbackBufferCuda = nullptr;
@@ -234,6 +249,10 @@ namespace sibr {
 		PointBasedRenderer::Ptr _pointbasedrenderer;
 		BufferCopyRenderer* _copyRenderer;
 		GaussianSurfaceRenderer* _gaussianRenderer;
+
+		void createImageBuffer();
+		void destroyImageBuffer();
+
 	};
 
 } /*namespace sibr*/ 

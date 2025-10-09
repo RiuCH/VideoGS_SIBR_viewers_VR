@@ -91,9 +91,9 @@ namespace sibr
 		/** Set the view resolution.
 		\param size the new resolution, in pixels.
 		*/
-		void				setResolution(const Vector2i& size);
+		virtual void				setResolution(const Vector2i& size);
 		/**\return the current resolution. */
-		const Vector2i&		getResolution( void ) const;
+		virtual const Vector2i&		getResolution( void ) const;
 
 		/** Toggle view status.
 		\param act if true, the view is active.
