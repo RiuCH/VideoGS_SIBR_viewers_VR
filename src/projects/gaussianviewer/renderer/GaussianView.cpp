@@ -527,7 +527,7 @@ void sibr::GaussianView::setResolution(const Vector2i &size)
 {
 	if (size != getResolution())
 	{
-		SIBR_LOG << "Set resolution => " << size << std::endl;
+		// SIBR_LOG << "Set resolution => " << size << std::endl;
 		ViewBase::setResolution(size);
 		destroyImageBuffer();
 		createImageBuffer();

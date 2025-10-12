@@ -19,7 +19,7 @@
 namespace sibr
 {
 
-    bool xrCheck(XrInstance instance, XrResult result, const char *format, ...)
+    inline bool xrCheck(XrInstance instance, XrResult result, const char *format, ...)
     {
         if (XR_SUCCEEDED(result))
         {
@@ -45,46 +45,46 @@ namespace sibr
     // else:
     // - if fallback is true, return the first supported format
     // - if fallback is false, return -1
-    int64_t
+    inline int64_t
     selectSwapchainFormat(XrInstance instance,
                           XrSession session,
-                          int64_t preferred_format,
+                          int64_t preferredFormat,
                           bool fallback)
     {
         XrResult result;
 
-        uint32_t swapchain_format_count;
-        result = xrEnumerateSwapchainFormats(session, 0, &swapchain_format_count, NULL);
+        uint32_t swapchainFormatCount;
+        result = xrEnumerateSwapchainFormats(session, 0, &swapchainFormatCount, NULL);
         if (!xrCheck(instance, result, "Failed to get number of supported swapchain formats"))
             return -1;
 
-        int64_t *swapchain_formats = (int64_t *)malloc(sizeof(int64_t) * swapchain_format_count);
-        result = xrEnumerateSwapchainFormats(session, swapchain_format_count, &swapchain_format_count,
-                                             swapchain_formats);
+        int64_t *swapchainFormats = (int64_t *)malloc(sizeof(int64_t) * swapchainFormatCount);
+        result = xrEnumerateSwapchainFormats(session, swapchainFormatCount, &swapchainFormatCount,
+            swapchainFormats);
         if (!xrCheck(instance, result, "Failed to enumerate swapchain formats"))
             return -1;
 
-        int64_t chosen_format = fallback ? swapchain_formats[0] : -1;
+        int64_t chosenFormat = fallback ? swapchainFormats[0] : -1;
 
-        for (uint32_t i = 0; i < swapchain_format_count; i++)
+        for (uint32_t i = 0; i < swapchainFormatCount; i++)
         {
-            if (swapchain_formats[i] == preferred_format)
+            if (swapchainFormats[i] == preferredFormat)
             {
-                chosen_format = swapchain_formats[i];
+                chosenFormat = swapchainFormats[i];
                 break;
             }
         }
-        if (fallback && chosen_format != preferred_format)
+        if (fallback && chosenFormat != preferredFormat)
         {
-            SIBR_LOG << "Falling back to non preferred swapchain format " << chosen_format << std::endl;
+            SIBR_LOG << "Falling back to non preferred swapchain format " << chosenFormat << std::endl;
         }
 
-        free(swapchain_formats);
+        free(swapchainFormats);
 
-        return chosen_format;
+        return chosenFormat;
     }
 
-    void printApiLayers()
+    inline void printApiLayers()
     {
         uint32_t count = 0;
         XrResult result = xrEnumerateApiLayerProperties(0, &count, NULL);
@@ -114,48 +114,46 @@ namespace sibr
         free(props);
     }
 
-    bool getRuntimeNameAndVersion(XrInstance instance, std::string &name, std::string &version)
+    inline bool getRuntimeNameAndVersion(XrInstance instance, std::string &name, std::string &version)
     {
         XrResult result;
-        XrInstanceProperties instance_props = {
-            .type = XR_TYPE_INSTANCE_PROPERTIES,
-            .next = NULL,
-        };
+        XrInstanceProperties instanceProps;
+        instanceProps.type = XR_TYPE_INSTANCE_PROPERTIES;
+        instanceProps.next = NULL;
 
-        result = xrGetInstanceProperties(instance, &instance_props);
+        result = xrGetInstanceProperties(instance, &instanceProps);
         if (!xrCheck(NULL, result, "Failed to get instance info"))
             return false;
 
-        name = std::string(instance_props.runtimeName);
+        name = std::string(instanceProps.runtimeName);
         std::stringstream ssVersion;
-        ssVersion << XR_VERSION_MAJOR(instance_props.runtimeVersion) << "." << XR_VERSION_MINOR(instance_props.runtimeVersion) << "."
-                  << XR_VERSION_PATCH(instance_props.runtimeVersion);
+        ssVersion << XR_VERSION_MAJOR(instanceProps.runtimeVersion) << "." << XR_VERSION_MINOR(instanceProps.runtimeVersion) << "."
+                  << XR_VERSION_PATCH(instanceProps.runtimeVersion);
         version = ssVersion.str();
 
         return true;
     }
 
-    void printSystemProperties(XrInstance instance, XrSystemId systemId)
+    inline void printSystemProperties(XrInstance instance, XrSystemId systemId)
     {
         XrResult result;
-        XrSystemProperties system_props = {
-            .type = XR_TYPE_SYSTEM_PROPERTIES,
-            .next = NULL,
-        };
+		XrSystemProperties systemProps;
+		systemProps.type = XR_TYPE_SYSTEM_PROPERTIES;
+		systemProps.next = NULL;
 
-        result = xrGetSystemProperties(instance, systemId, &system_props);
+        result = xrGetSystemProperties(instance, systemId, &systemProps);
         if (!xrCheck(instance, result, "Failed to get System properties"))
             return;
 
-        SIBR_LOG << "System properties for system " << system_props.systemId << ": " << system_props.systemName << ", vendor ID " << system_props.vendorId << std::endl;
-        SIBR_LOG << "\tMax layers          : " << system_props.graphicsProperties.maxLayerCount << std::endl;
-        SIBR_LOG << "\tMax swapchain height: " << system_props.graphicsProperties.maxSwapchainImageHeight << std::endl;
-        SIBR_LOG << "\tMax swapchain width : " << system_props.graphicsProperties.maxSwapchainImageWidth << std::endl;
-        SIBR_LOG << "\tOrientation Tracking: " << system_props.trackingProperties.orientationTracking << std::endl;
-        SIBR_LOG << "\tPosition Tracking   : " << system_props.trackingProperties.positionTracking << std::endl;
+        SIBR_LOG << "System properties for system " << systemProps.systemId << ": " << systemProps.systemName << ", vendor ID " << systemProps.vendorId << std::endl;
+        SIBR_LOG << "\tMax layers          : " << systemProps.graphicsProperties.maxLayerCount << std::endl;
+        SIBR_LOG << "\tMax swapchain height: " << systemProps.graphicsProperties.maxSwapchainImageHeight << std::endl;
+        SIBR_LOG << "\tMax swapchain width : " << systemProps.graphicsProperties.maxSwapchainImageWidth << std::endl;
+        SIBR_LOG << "\tOrientation Tracking: " << systemProps.trackingProperties.orientationTracking << std::endl;
+        SIBR_LOG << "\tPosition Tracking   : " << systemProps.trackingProperties.positionTracking << std::endl;
     }
 
-    void printViewconfigViewInfo(uint32_t m_viewCount, XrViewConfigurationView *m_viewConfigViews)
+    inline void printViewconfigViewInfo(uint32_t m_viewCount, XrViewConfigurationView *m_viewConfigViews)
     {
         for (uint32_t i = 0; i < m_viewCount; i++)
         {
@@ -167,9 +165,18 @@ namespace sibr
     }
 
     template <typename T>
-    T radianToDegree(T value)
+    inline T radianToDegree(T value)
     {
         return value * 180.f / M_PI;
+    }
+
+    inline void stringCopy(char* dest, const char* src, size_t destsz)
+    {
+    #ifdef WIN32
+        strcpy_s(dest, destsz, src);
+    #else
+        strcpy(dest, src);
+    #endif
     }
 
 } /*namespace sibr*/

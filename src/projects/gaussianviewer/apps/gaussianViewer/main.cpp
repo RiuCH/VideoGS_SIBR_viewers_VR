@@ -231,9 +231,14 @@ int main(int ac, char** av)
 		case 1:
 			multiViewManager.renderingMode(IRenderingMode::Ptr(new StereoAnaglyphRdrMode()));
 			break;
-		case 2:
-			multiViewManager.renderingMode(IRenderingMode::Ptr(new OpenXRRdrMode(window)));
+		case 2: {
+			std::string vrConfigPath = myArgs.modelPath.get();
+			if (vrConfigPath.back() != '/')
+				vrConfigPath += "/";
+			vrConfigPath += "vr.json";
+			multiViewManager.renderingMode(IRenderingMode::Ptr(new OpenXRRdrMode(window, vrConfigPath)));
 			break;
+		}
 		default:
 			break;
 	}

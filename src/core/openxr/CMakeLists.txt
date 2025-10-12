@@ -10,15 +10,19 @@
 set(SIBR_PROJECT "openxr")
 project(sibr_${SIBR_PROJECT})
 
-file(GLOB SOURCES "*.cpp" "*.h" "*.hpp")
+file(GLOB_RECURSE SOURCES "*.cpp" "*.h" "*.hpp")
 source_group("Source Files" FILES ${SOURCES})
 
 ## Specify target rules
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
-target_include_directories(${PROJECT_NAME} PUBLIC ${OpenXR_INCLUDE_DIR})
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${OpenXR_INCLUDE_DIR}
+    ${picojson_INCLUDE_DIRS}
+)
 target_link_libraries(${PROJECT_NAME}
     OpenXR::openxr_loader
+    picojson
     sibr_view
 )
 
