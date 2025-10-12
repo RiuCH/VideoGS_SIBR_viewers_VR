@@ -917,28 +917,6 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 		cudaGetLastError(); 
 		// std::cout << "Rendering resolution: " << _resolution.x() << "x" << _resolution.y() << "x" << std::endl;
 
-		// // --- BEGIN DEBUG BLOCK ---
-		// std::cout << "\n--- DEBUG: Values before Rasterizer::forward ---" << std::endl;
-		// std::cout << "count: " << count << std::endl;
-		// std::cout << "_sh_degree: " << _sh_degree << std::endl;
-		// std::cout << "Resolution: " << _resolution.x() << " x " << _resolution.y() << std::endl;
-		// std::cout << "_scalingModifier: " << _scalingModifier << std::endl;
-		// std::cout << "tan_fovx: " << tan_fovx << std::endl;
-		// std::cout << "tan_fovy: " << tan_fovy << std::endl;
-
-		// // Check for null pointers which can cause crashes
-		// std::cout << "Pointer Checks:" << std::endl;
-		// std::cout << "  pos_cuda: " << (pos_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  shs_cuda: " << (shs_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  opacity_cuda: " << (opacity_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  scale_cuda: " << (scale_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  rot_cuda: " << (rot_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  view_cuda: " << (view_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  proj_cuda: " << (proj_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  cam_pos_cuda: " << (cam_pos_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "  image_cuda: " << (image_cuda ? "VALID" : "!!! NULL !!!") << std::endl;
-		// std::cout << "------------------------------------------------\n" << std::endl;
-
 		CudaRasterizer::Rasterizer::forward(
 			geomBufferFunc,
 			binningBufferFunc,
@@ -1035,7 +1013,6 @@ void sibr::GaussianView::onUpdate(Input & input)
     // After any potential frame_id change, update the active pointers for rendering.
     // This ensures onRenderIBR uses the correct frame's data.
     if (frame_id < sequences_length) {
-		// IMPROVED LOGIC HERE
         if (ready_array[frame_id] == 1 && P_array[frame_id] > 0) {
 			count = P_array[frame_id];
 			pos_cuda = pos_cuda_array[frame_id];
