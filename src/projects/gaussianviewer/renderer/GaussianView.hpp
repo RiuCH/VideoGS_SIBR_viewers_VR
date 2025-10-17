@@ -41,7 +41,7 @@
 #include <sys/sysinfo.h>
 #endif
 
-#define SEQUENCE_LENGTH 2000
+#define SEQUENCE_LENGTH 1000
 
 namespace CudaRasterizer
 {
@@ -123,7 +123,8 @@ namespace sibr {
 		int num_att_index = 29;
 		int sequences_length = 0;
 
-		int ready_cache_size = 100;
+		int ready_cache_size = 20;
+		std::mutex mtx_frame_id;
 
 		int count;
 		float* pos_cuda;
@@ -171,13 +172,17 @@ namespace sibr {
 			// "http://10.15.89.67:10000/coser18_0503_qp0/", 
 			// "http://10.15.89.67:10000/1015hanfu_qp0/", 
 			// "http://10.15.89.67:10000/coser18_qp0_new/"
+			// "http://127.0.0.1/bicycle_static/",
+			"http://127.0.0.1/atc_1/",
+			"http://127.0.0.1/png_all_0/",
+			"http://127.0.0.1/png_all_0/",
 			"http://127.0.0.1/png_all_25/",
 			"http://127.0.0.1/png_all_50/",
 			"http://127.0.0.1/ykx_boxing_long_qp15_380/"
 
 		};
 		std::vector<int> video_sh = {
-			// 0,
+			// 3,
 			0,
 			0,
 			0,
@@ -237,7 +242,7 @@ namespace sibr {
 		GaussianData* gData;
 		GaussianData* gData_array[500];
 		// bool _multi_view_play = true;
-		bool _multi_view_play = false;
+		std::atomic<bool> _multi_view_play{false};
 		bool _use_interop = true;
 		bool _interop_failed = false;
 		std::vector<char> fallback_bytes;

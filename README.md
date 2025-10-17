@@ -44,9 +44,31 @@ https://github.com/WiVRn/WiVRn?tab=readme-ov-file
 
 ## Control
 
-The main control is same as 3DGS SIBR viewer. 
+
 
 For dynamic play, click the button `multi view play` in `Play` to play the video. You can also change the frame by dragging the slider `playing frame`in `Play` panel. To change the video, select the remote server link of `Remote Video list` in `3D Gaussians` planel. 
+
+Two VR experience modes are available:
+* **Free world standing:** you can walk freely in a rectangular play space
+* **Seated:** you can look around but only move within the space with controllers (the origin is world-locked)
+
+You can enhance your VR experience by defining a starting camera position and re-aligning the scene through the following commands:
+
+|          |         |
+| -------- | ------- |
+| Move the camera | Left controller's stick |
+| Elevate/lower the camera | Left controller's vertical stick (works only on `seated` mode) |
+| Rotate the camera | Right controller's horizontal stick |
+| Move the scene | Drag with the left controller (trigger + move) |
+| Rotate the scene | Drag with the right controller (trigger + rotation) |
+
+Some of those commands are also available through the UI: `OpenXR > Configuration`.
+
+You can also control the controllers's sentivity through the dedicated slider.
+
+Once done, pressing `Save VR configuration` button saves the VR configuration into a `vr.json` file. This configuration will then be automatically loaded on next application startups.
+
+
 
 ## Code illustration
 
