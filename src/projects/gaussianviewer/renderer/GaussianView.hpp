@@ -157,6 +157,26 @@ namespace sibr {
 		GpuFrameSlot gpu_ring_buffer[GPU_RING_BUFFER_SLOTS];
         cudaStream_t data_streams[GPU_RING_BUFFER_SLOTS];
         cudaEvent_t data_events[GPU_RING_BUFFER_SLOTS];
+
+		std::string _background_ply_path;
+        int background_count = 0;
+        float* background_pos_cuda = nullptr;
+        float* background_rot_cuda = nullptr;
+        float* background_scale_cuda = nullptr;
+        float* background_opacity_cuda = nullptr;
+        float* background_shs_cuda = nullptr;
+
+        // --- Combined Data Buffers (for rendering) ---
+        int combined_buffer_allocated_count = 0; // Max size allocated
+        float* combined_pos_cuda = nullptr;
+        float* combined_rot_cuda = nullptr;
+        float* combined_scale_cuda = nullptr;
+        float* combined_opacity_cuda = nullptr;
+        float* combined_shs_cuda = nullptr;
+        int* combined_rect_cuda = nullptr; // Needed if dynamic part uses fast culling
+
+        cudaStream_t combine_stream = 0; // Stream for combining data
+        cudaEvent_t combine_event = 0;   // Event to signal combination complete
 	
 		// std::vector<cv::Mat> png_vector;
 		std::vector<std::vector<cv::Mat>> global_png_vector;
@@ -267,7 +287,8 @@ namespace sibr {
 		GaussianData* gData;
 		GaussianData* gData_array[500];
 		// bool _multi_view_play = true;
-		std::atomic<bool> _multi_view_play{false};
+		std::atomic<bool> _multi_view_play{false};\
+		std::atomic<bool> _slider_seek_active{false};
 		bool _use_interop = true;
 		bool _interop_failed = false;
 		std::vector<char> fallback_bytes;

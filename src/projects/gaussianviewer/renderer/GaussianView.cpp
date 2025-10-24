@@ -238,6 +238,18 @@ void sibr::GaussianView::readyVideo_func() {
 			std::cout << "[readyVideo_func] Frame " << i << " is already ready, skipping." << std::endl;
 			continue;
 		}
+
+		if (downloaded_array[i] == 0) {
+			std::cout << "[readyVideo_func] Frame " << i << " not downloaded yet. Re-queueing and sleeping." << std::endl;
+			// Put the frame back in the queue to be processed later
+			{
+				std::lock_guard<std::mutex> lock(mtx_ready);
+				need_ready_q.push(i);
+			}
+			// Sleep to prevent this thread from spin-locking on this frame
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			continue;
+		}
 		
 		std::cout << "[readyVideo_func] Preparing to load frame " << i << std::endl;
 		loadVideo_func(i);
@@ -917,22 +929,16 @@ void sibr::GaussianView::onUpdate(Input & input)
 		current_frame_id = frame_id;
 	}
 
-	if (_multi_view_play.load()) {
+	if (!_slider_seek_active &&_multi_view_play.load()) {
 		if (elapsed > frameDuration) {
-			// Find the next frame that is ready
-			// int next_ready_frame = -1;
-			// for (int i = current_frame_id + 1; i < sequences_length; ++i) {
-			// 	if (ready_array[i] == 1) {
-			// 		next_ready_frame = i;
-			// 		break;
-			// 	}
-			// }
 
 			if (ready_array[current_frame_id+1] == 1) {
 				std::cout << "[onUpdate] Advancing from " << current_frame_id << " to " << current_frame_id + 1<< std::endl;
-				std::lock_guard<std::mutex> lock(mtx_frame_id);
-				frame_id = current_frame_id + 1;
-				current_frame_id = frame_id;
+				{ 
+                     std::lock_guard<std::mutex> lock(mtx_frame_id);
+                     frame_id = current_frame_id + 1;
+                     current_frame_id = frame_id; 
+                 }
 				lastUpdateTimestamp = now;
 				if (current_frame_id - 1 >= 0) {
 					ready_array[current_frame_id - 1] = 0;
@@ -988,6 +994,8 @@ void sibr::GaussianView::onUpdate(Input & input)
 			    opacity_cuda = current_slot.opacity_cuda;
 			    shs_cuda = current_slot.shs_cuda;
 			    rect_cuda = current_slot.rect_cuda;
+
+				_slider_seek_active = false;
             } else {
                 count = 0;
             }
@@ -1033,7 +1041,8 @@ void sibr::GaussianView::onGUI()
 			std::cout << "[GUI] Playback toggled to: " << (temp_play ? "ON" : "OFF") << std::endl;
 		}
 		if (ImGui::SliderInt("Playing Frame", &frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
-
+			_multi_view_play = false; 
+   			_slider_seek_active = true;
 			
 			std::cout << "frame_id changed to " << frame_id << std::endl;
 			for (int i = 0; i < sequences_length; i++) {
@@ -1069,14 +1078,15 @@ void sibr::GaussianView::onGUI()
 					std::cerr << "Failed to process some videos" << std::endl;
 				}
 			}
+			int download_end_index = group_frame_index[group_index].second;
+			std::fill(downloaded_array + download_start_index, downloaded_array + download_end_index, 1);
 
-			for (int i = frame_id; i <= frame_id + ready_cache_size; i+=frame_step)
+
+			for (int i = download_start_index; i <= download_end_index; i+=frame_step)
 			{	
 				std::cout << "Preloading frame " << i << std::endl;
 				loadVideo_func(i);
 			}
-
-			_multi_view_play = false;
 
 			// request download and ready for frames around frame_id
 			// request download
