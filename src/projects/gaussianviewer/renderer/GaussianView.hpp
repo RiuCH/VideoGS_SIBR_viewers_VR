@@ -43,6 +43,10 @@
 
 #define SEQUENCE_LENGTH 1000
 
+#define MAX_GAUSSIANS_PER_FRAME 2000000 
+
+#define GPU_RING_BUFFER_SLOTS 20
+
 namespace CudaRasterizer
 {
 	class Rasterizer;
@@ -52,6 +56,15 @@ namespace sibr {
 
 	class BufferCopyRenderer;
 	class BufferCopyRenderer2;
+
+	struct GpuFrameSlot {
+        float* pos_cuda = nullptr;
+        float* rot_cuda = nullptr;
+        float* scale_cuda = nullptr;
+        float* opacity_cuda = nullptr;
+        float* shs_cuda = nullptr;
+        int* rect_cuda = nullptr;
+    };
 
 	/**
 	 * \class RemotePointView
@@ -124,6 +137,7 @@ namespace sibr {
 		int sequences_length = 0;
 
 		int ready_cache_size = 20;
+		int download_cache_size = 3;
 		std::mutex mtx_frame_id;
 
 		int count;
@@ -134,12 +148,11 @@ namespace sibr {
 		float* shs_cuda;
 		int* rect_cuda;
 		int P_array[SEQUENCE_LENGTH];
-		float* pos_cuda_array[SEQUENCE_LENGTH];
-		float* rot_cuda_array[SEQUENCE_LENGTH];
-		float* scale_cuda_array[SEQUENCE_LENGTH];
-		float* opacity_cuda_array[SEQUENCE_LENGTH];
-		float* shs_cuda_array[SEQUENCE_LENGTH];
-		int* rect_cuda_array[SEQUENCE_LENGTH];
+
+		GpuFrameSlot gpu_ring_buffer[GPU_RING_BUFFER_SLOTS];
+        cudaStream_t data_streams[GPU_RING_BUFFER_SLOTS];
+        cudaEvent_t data_events[GPU_RING_BUFFER_SLOTS];
+	
 		// std::vector<cv::Mat> png_vector;
 		std::vector<std::vector<cv::Mat>> global_png_vector;
 		// init decoder
@@ -173,9 +186,12 @@ namespace sibr {
 			// "http://10.15.89.67:10000/1015hanfu_qp0/", 
 			// "http://10.15.89.67:10000/coser18_qp0_new/"
 			// "http://127.0.0.1/bicycle_static/",
-			"http://127.0.0.1/atc_1/",
-			"http://127.0.0.1/png_all_0/",
-			"http://127.0.0.1/png_all_0/",
+			// "http://127.0.0.1/atc_1_q0/",
+			// "http://127.0.0.1/atc_1_q25/",
+			// "http://127.0.0.1/atc_1_q25_nobg/",
+			"http://127.0.0.1/atc_1_q0_nobg/",
+			// "http://127.0.0.1/png_all_0/",
+			// "http://127.0.0.1/png_all_0/",
 			"http://127.0.0.1/png_all_25/",
 			"http://127.0.0.1/png_all_50/",
 			"http://127.0.0.1/ykx_boxing_long_qp15_380/"
@@ -183,6 +199,9 @@ namespace sibr {
 		};
 		std::vector<int> video_sh = {
 			// 3,
+			0,
+			0,
+			0,
 			0,
 			0,
 			0,
@@ -211,6 +230,7 @@ namespace sibr {
 		int downloaded_array[SEQUENCE_LENGTH];
 		int ready_frames = -1;
 		int ready_array[SEQUENCE_LENGTH];
+		int num_frames = 1;
 
 		bool frame_changed = false;
 

@@ -105,10 +105,10 @@ namespace sibr
             m_openxrHmd->input()->setStickMoveCallback(OpenXRInput::Hand::LEFT, [this](float x, float y) {
                 float step = 0.1f;
                 if (abs(x) > 0.5f) {
-                    m_vrConfig->camera().translate((m_vrConfig->camera().rotation() * m_headCameraInVrWorld.right()) * x * step * m_controlSensitivity);
+                    m_vrConfig->camera().translate((m_vrConfig->camera().rotation() * m_headCameraInVrWorld.right()) * x * step * m_controlSensitivity_t);
                 }
                 if (abs(y) > 0.5f) {
-                    m_vrConfig->camera().translate((m_vrConfig->camera().rotation() * m_headCameraInVrWorld.dir()) * y * step * m_controlSensitivity);
+                    m_vrConfig->camera().translate((m_vrConfig->camera().rotation() * m_headCameraInVrWorld.dir()) * y * step * m_controlSensitivity_t);
                 }
             });
             m_openxrHmd->input()->setStickMoveCallback(OpenXRInput::Hand::RIGHT, [this](float x, float y) {

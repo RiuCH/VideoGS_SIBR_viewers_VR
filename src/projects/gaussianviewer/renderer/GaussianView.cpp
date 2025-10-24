@@ -81,10 +81,11 @@ SIBR_ERR << cudaGetErrorString(cudaGetLastError());
 # define CUDA_SAFE_CALL(A) A
 #endif
 
-bool image_dequan(cv::Mat m_att_img, std::vector<float>& gaussian_vector, float max, float min) {
-	cv::Mat att_img = m_att_img.clone();
+bool image_dequan(const cv::Mat& m_att_img, std::vector<float>& gaussian_vector, float max, float min) {
+    cv::Mat att_img;
+    m_att_img.convertTo(att_img, CV_32F, 1.0 / (std::pow(2.0, 8) - 1.0));
 	// perform dequantization
-	att_img.convertTo(att_img, CV_32F, 1.0 / (std::pow(2.0, 8) - 1.0));
+	// att_img.convertTo(att_img, CV_32F, 1.0 / (std::pow(2.0, 8) - 1.0)); // Moved up
 	cv::Mat dequantized_img = att_img * (max - min) + min;
 	// convert to 1D vector
 	std::vector<float> deimg_vector(dequantized_img.rows * dequantized_img.cols);
@@ -100,21 +101,21 @@ bool image_dequan(cv::Mat m_att_img, std::vector<float>& gaussian_vector, float 
 // Load the Gaussians from the given png.
 void sibr::GaussianView::loadVideo_func(int frame_index)
 {
-	// CRITICAL: Add bounds checking for frame_index
-	if (frame_index < 0 || frame_index >= sequences_length) {
-		std::cerr << "ERROR: Invalid frame_index " << frame_index 
-		          << " (valid range: 0-" << sequences_length - 1 << ")" << std::endl;
-		return;
-	}
+	// // CRITICAL: Add bounds checking for frame_index
+	// if (frame_index < 0 || frame_index >= sequences_length) {
+	// 	std::cerr << "ERROR: Invalid frame_index " << frame_index 
+	// 	          << " (valid range: 0-" << sequences_length - 1 << ")" << std::endl;
+	// 	return;
+	// }
 	
-	// Check if global_png_vector has data for this frame
-	for (int att_idx = 0; att_idx < num_att_index; ++att_idx) {
-		if (frame_index >= global_png_vector[att_idx].size()) {
-			std::cerr << "ERROR: Frame " << frame_index << " not available in global_png_vector[" 
-			          << att_idx << "] (size: " << global_png_vector[att_idx].size() << ")" << std::endl;
-			return;
-		}
-	}
+	// // Check if global_png_vector has data for this frame
+	// for (int att_idx = 0; att_idx < num_att_index; ++att_idx) {
+	// 	if (frame_index >= global_png_vector[att_idx].size()) {
+	// 		std::cerr << "ERROR: Frame " << frame_index << " not available in global_png_vector[" 
+	// 		          << att_idx << "] (size: " << global_png_vector[att_idx].size() << ")" << std::endl;
+	// 		return;
+	// 	}
+	// }
 	
 	// int json_index = frame_index % 101;
 	int json_index = frame_index;
@@ -135,6 +136,13 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 		SIBR_ERR << "Error: " << "vector size not match" << std::endl;
 	}
 
+	if (m_count > MAX_GAUSSIANS_PER_FRAME) {
+        SIBR_ERR << "ERROR: Frame " << frame_index << " has " << m_count << " Gaussians, "
+                 << "which is more than the pre-allocated buffer size of " 
+                 << MAX_GAUSSIANS_PER_FRAME << "!" << std::endl;
+        return;
+    }
+
 	std::vector<Pos> pos(m_count);
 	std::vector<Rot> rot(m_count);
 	std::vector<Scale> scale(m_count);
@@ -153,8 +161,8 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 	for (size_t att_index = 0; att_index <= 2; att_index ++) {
 		float min = minmax_values[2 * att_index];
 		float max = minmax_values[2 * att_index + 1];
-		cv::Mat att_even_img = global_png_vector[att_index * 2][frame_index].clone();
-		cv::Mat att_odd_img = global_png_vector[att_index * 2 + 1][frame_index].clone();
+		const cv::Mat& att_even_img = global_png_vector[att_index * 2][frame_index];
+		const cv::Mat& att_odd_img = global_png_vector[att_index * 2 + 1][frame_index];
 
 		int total_pixels = att_even_img.rows * att_even_img.cols;
 		std::vector<uint8_t> even_bytes(total_pixels), odd_bytes(total_pixels);
@@ -184,8 +192,6 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 		}
 		gaussian_data[att_index] = deimg_vector;
 	}
-
-	// std::cout << "Debuggggggggggg" << std::endl;
 
 	// other attributes using multithreading
 	std::vector<std::future<bool>> thread_futures;
@@ -243,26 +249,31 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 	end = std::chrono::high_resolution_clock::now();
 	elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 	// std::cout << frame_index << "Second For Elapsed time: " << elapsed.count() << " ms" << std::endl;
-	int cnt = frame_index;
+	int slot = frame_index % GPU_RING_BUFFER_SLOTS;
+    cudaStream_t stream = data_streams[slot];
+    GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
 
 	start = std::chrono::high_resolution_clock::now();
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&pos_cuda_array[cnt], sizeof(Pos) * m_count));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(pos_cuda_array[cnt], pos.data(), sizeof(Pos) * m_count, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&rot_cuda_array[cnt], sizeof(Rot) * m_count));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(rot_cuda_array[cnt], rot.data(), sizeof(Rot) * m_count, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&scale_cuda_array[cnt], sizeof(Scale) * m_count));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(scale_cuda_array[cnt], scale.data(), sizeof(Scale) * m_count, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&opacity_cuda_array[cnt], sizeof(float) * m_count));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(opacity_cuda_array[cnt], opacity.data(), sizeof(float) * m_count, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&shs_cuda_array[cnt], sizeof(SHs<3>) * m_count));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(shs_cuda_array[cnt], shs.data(), sizeof(SHs<3>) * m_count, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&rect_cuda_array[cnt], 2 * m_count * sizeof(int)));
-	CUDA_SAFE_CALL_ALWAYS(cudaMemset(rect_cuda_array[cnt], 0, 2 * m_count * sizeof(int)));
+
+    // No more cudaMalloc! Just asynchronous copies to the pre-allocated buffer.
+	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.pos_cuda, pos.data(), sizeof(Pos) * m_count, cudaMemcpyHostToDevice, stream));
+	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.rot_cuda, rot.data(), sizeof(Rot) * m_count, cudaMemcpyHostToDevice, stream));
+	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.scale_cuda, scale.data(), sizeof(Scale) * m_count, cudaMemcpyHostToDevice, stream));
+	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.opacity_cuda, opacity.data(), sizeof(float) * m_count, cudaMemcpyHostToDevice, stream));
+	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.shs_cuda, shs.data(), sizeof(SHs<3>) * m_count, cudaMemcpyHostToDevice, stream));
+	
+    // We still need a temporary host-side buffer for rects, or just use the vector.
+    std::vector<int> rects_host(2 * m_count, 0); // Replaces cudaMalloc+cudaMemset
+    CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.rect_cuda, rects_host.data(), 2 * m_count * sizeof(int), cudaMemcpyHostToDevice, stream));
+
 	P_array[frame_index] = m_count;
 	end = std::chrono::high_resolution_clock::now();
 	elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 	// std::cout << frame_index << "CUDA memcopy Elapsed time: " << elapsed.count() << " ms" << std::endl;
-	// ready_frames = frame_index;
+	
+    // Record an event in the stream. The render thread will wait for this.
+    CUDA_SAFE_CALL(cudaEventRecord(data_events[slot], stream));
+
 	ready_array[frame_index] = 1;
 	ready_frames = frame_index;
 	// std::cout << "ready_frames: " << ready_frames << std::endl;
@@ -292,8 +303,12 @@ void sibr::GaussianView::readyVideo_func() {
 			current_frame_id = frame_id;
 		}
 
-		if ( i < current_frame_id - ready_cache_size || i > current_frame_id + ready_cache_size ) {
+		if ( i >= current_frame_id + ready_cache_size ) {
 			std::cout << "[readyVideo_func] Frame " << i << " is out of window size, skipping." << std::endl;
+			continue;
+		}
+		if (ready_array[i] == 1) {
+			std::cout << "[readyVideo_func] Frame " << i << " is already ready, skipping." << std::endl;
 			continue;
 		}
 		
@@ -492,6 +507,7 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
         }
     }
 	// downloaded_frames = global_png_vector[0].size();
+	num_frames = download_end_index - download_start_index + 1;
 	downloaded_frames = download_end_index;
 	// set downloaded from download_start_index to download_end_index
 	std::fill(downloaded_array + download_start_index, downloaded_array + download_end_index + 1, 1);
@@ -505,13 +521,27 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	minmax_obj = fetchJsonObj(minmax_json_path);
 
 	// start timer
+
+	int shs_size = sizeof(SHs<3>); // sh_degree is 3
+	for (int i = 0; i < GPU_RING_BUFFER_SLOTS; ++i)
+	{
+		CUDA_SAFE_CALL_ALWAYS(cudaStreamCreate(&data_streams[i]));
+		CUDA_SAFE_CALL_ALWAYS(cudaEventCreate(&data_events[i]));
+
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].pos_cuda, sizeof(Pos) * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].rot_cuda, sizeof(Rot) * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].scale_cuda, sizeof(Scale) * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].opacity_cuda, sizeof(float) * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].shs_cuda, shs_size * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].rect_cuda, 2 * MAX_GAUSSIANS_PER_FRAME * sizeof(int)));
+	}
 	
 	auto start = std::chrono::high_resolution_clock::now();
 	// std::cout << "preload index start: " << group_frame_index[0].first << std::endl;
 	// std::cout << "preload index end: " << group_frame_index[0].second << std::endl;
 	// for (int i = group_frame_index[0].first; i <= group_frame_index[0].second; i+=frame_step)
 	// std::cout << "group frame index" << group_frame_index[0].second << std::endl;
-	for (int i = download_start_index; i <= download_end_index; i+=frame_step)
+	for (int i = download_start_index; i < download_start_index + std::min(ready_cache_size, download_end_index+1); i+=frame_step)
 	{	
 		std::cout << "Preloading frame " << i << std::endl;
 		loadVideo_func(i);
@@ -526,13 +556,19 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 
 	float bg[3] = { white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f };
 	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_cuda, bg, 3 * sizeof(float), cudaMemcpyHostToDevice));
+	
+	std::cout << "Waiting for frame 0 to be ready..." << std::endl;
+    int first_slot = 0 % GPU_RING_BUFFER_SLOTS;
+    CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[first_slot]));
+    std::cout << "Frame 0 is ready." << std::endl;
+
 	count = P_array[0];
-	pos_cuda = pos_cuda_array[0];
-	rot_cuda = rot_cuda_array[0];
-	scale_cuda = scale_cuda_array[0];
-	opacity_cuda = opacity_cuda_array[0];
-	shs_cuda = shs_cuda_array[0];
-	rect_cuda = rect_cuda_array[0];
+	pos_cuda = gpu_ring_buffer[first_slot].pos_cuda;
+	rot_cuda = gpu_ring_buffer[first_slot].rot_cuda;
+	scale_cuda = gpu_ring_buffer[first_slot].scale_cuda;
+	opacity_cuda = gpu_ring_buffer[first_slot].opacity_cuda;
+	shs_cuda = gpu_ring_buffer[first_slot].shs_cuda;
+	rect_cuda = gpu_ring_buffer[first_slot].rect_cuda;
 
 	_gaussianRenderer = new GaussianSurfaceRenderer();
 	createImageBuffer();
@@ -582,10 +618,10 @@ void sibr::GaussianView::createImageBuffer()
 		// binningBufferFunc = resizeFunctional(&binningPtr, allocdBinning);
 		// imgBufferFunc = resizeFunctional(&imgPtr, allocdImg);
 
-		// Check system resources before creating threads
-		if (!checkSystemResources()) {
-			throw std::runtime_error("System resource check failed: Insufficient resources to continue.");
-		}
+		// // Check system resources before creating threads
+		// if (!checkSystemResources()) {
+		// 	throw std::runtime_error("System resource check failed: Insufficient resources to continue.");
+		// }
 		
 		// Safely create/restart threads with proper exception handling
 		std::lock_guard<std::mutex> thread_lock(_thread_management_mutex);
@@ -609,7 +645,7 @@ void sibr::GaussianView::createImageBuffer()
 			
 			{
 				std::lock_guard<std::mutex> lock(mtx_ready);
-				for (int group_index = 1; group_index < group_frame_index.size(); group_index++) {
+				for (int group_index = 1; group_index < download_cache_size; group_index++) {
 					need_download_q.push(group_index);
 				}
 			}
@@ -954,29 +990,37 @@ void sibr::GaussianView::onUpdate(Input & input)
 	if (_multi_view_play.load()) {
 		if (elapsed > frameDuration) {
 			// Find the next frame that is ready
-			int next_ready_frame = -1;
-			for (int i = current_frame_id + 1; i < sequences_length; ++i) {
-				if (ready_array[i] == 1) {
-					next_ready_frame = i;
-					break;
-				}
-			}
+			// int next_ready_frame = -1;
+			// for (int i = current_frame_id + 1; i < sequences_length; ++i) {
+			// 	if (ready_array[i] == 1) {
+			// 		next_ready_frame = i;
+			// 		break;
+			// 	}
+			// }
 
-			if (next_ready_frame != -1) {
-				std::cout << "[onUpdate] Advancing from " << current_frame_id << " to " << next_ready_frame << std::endl;
+			if (ready_array[current_frame_id+1] == 1) {
+				std::cout << "[onUpdate] Advancing from " << current_frame_id << " to " << current_frame_id + 1<< std::endl;
 				std::lock_guard<std::mutex> lock(mtx_frame_id);
-				frame_id = next_ready_frame;
+				frame_id = current_frame_id + 1;
 				current_frame_id = frame_id;
 				lastUpdateTimestamp = now;
 				if (current_frame_id - 1 >= 0) {
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[current_frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[current_frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[current_frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[current_frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[current_frame_id - 1]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[current_frame_id - 1]));
 					ready_array[current_frame_id - 1] = 0;
+
+					// Free global png_vector to save memory
+					for (int att_index = 0; att_index < num_att_index; att_index ++) {
+						global_png_vector[att_index][current_frame_id - 1].release();;
+					}
+					downloaded_array[current_frame_id - 1] = 0;
 				}
+				
+				// Download frame in buffer
+				if ((current_frame_id-1) % num_frames == 0 && current_frame_id / num_frames + download_cache_size < group_frame_index.size()) {
+					std::cout << "[onUpdate] Requesting group " << current_frame_id / num_frames + download_cache_size << " to be downloaded." << std::endl;
+					need_download_q.push(current_frame_id / num_frames + download_cache_size);
+					cv_download.notify_one();
+				}
+
 				// Ready frame in buffer
 				if (current_frame_id + ready_cache_size -1  < sequences_length) {
 					std::cout << "[onUpdate] Requesting frame " << current_frame_id + ready_cache_size -1 << " to be readied." << std::endl;
@@ -998,16 +1042,27 @@ void sibr::GaussianView::onUpdate(Input & input)
 
 	// After any potential frame_id change, update the active pointers for rendering.
 	if (current_frame_id < sequences_length) {
-		if (ready_array[current_frame_id] == 1 && P_array[current_frame_id] > 0) {
-			count = P_array[current_frame_id];
-			pos_cuda = pos_cuda_array[current_frame_id];
-			rot_cuda = rot_cuda_array[current_frame_id];
-			scale_cuda = scale_cuda_array[current_frame_id];
-			opacity_cuda = opacity_cuda_array[current_frame_id];
-			shs_cuda = shs_cuda_array[current_frame_id];
-			rect_cuda = rect_cuda_array[current_frame_id];
+		if (ready_array[current_frame_id] == 1) {
+            int slot = current_frame_id % GPU_RING_BUFFER_SLOTS;
+
+            // This is the critical wait. If the frame isn't ready,
+            // the render thread will pause here until the data is on the GPU.
+            CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[slot]));
+
+            if (P_array[current_frame_id] > 0) {
+                GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
+			    count = P_array[current_frame_id];
+			    pos_cuda = current_slot.pos_cuda;
+			    rot_cuda = current_slot.rot_cuda;
+			    scale_cuda = current_slot.scale_cuda;
+			    opacity_cuda = current_slot.opacity_cuda;
+			    shs_cuda = current_slot.shs_cuda;
+			    rect_cuda = current_slot.rect_cuda;
+            } else {
+                count = 0;
+            }
 		} else {
-			count = 0;
+			count = 0; // Frame not loaded yet
 		}
 	} else {
 		count = 0;
@@ -1048,24 +1103,62 @@ void sibr::GaussianView::onGUI()
 			std::cout << "[GUI] Playback toggled to: " << (temp_play ? "ON" : "OFF") << std::endl;
 		}
 		if (ImGui::SliderInt("Playing Frame", &frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
+
+			
 			std::cout << "frame_id changed to " << frame_id << std::endl;
 			for (int i = 0; i < sequences_length; i++) {
+			
+				if (downloaded_array[i] == 1) {
+					std::cout << "Freeing downloaded frame " << i << std::endl;
+					// free global png_vector to save memory
+					for (int att_index = 0; att_index < num_att_index; att_index ++) {
+						global_png_vector[att_index][i].release();;
+					}
+					downloaded_array[i] = 0;
+				}
+
+		
 				if (ready_array[i] == 1) {
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[i]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[i]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[i]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[i]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[i]));
-					CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[i]));
 					// set ready to 0
 					ready_array[i] = 0;
 				}
+
 			}
-			for (int i=0; i<ready_cache_size; i++) {
-				if (frame_id + i < sequences_length && ready_array[frame_id + i] == 0) {
-					std::cout << "[onGUI] Requesting frame " << frame_id + i << " to be readied." << std::endl;
-					need_ready_q.push(frame_id + i);
-					cv_ready.notify_one();
+			
+			int group_index = frame_id / num_frames;
+			int download_start_index = group_frame_index[group_index].first;
+			std::vector<std::future<bool>> thread_futures;
+			for (int att_index = 0; att_index < num_att_index; att_index ++) {
+					std::string videopath = folder + "group" + std::to_string(group_index) + "/" + std::to_string(att_index) + ".mp4";
+					thread_futures.push_back(std::async(std::launch::async, getAllFramesNew, videopath, download_start_index, std::ref(global_png_vector[att_index])));
+				}
+
+			for (auto& f : thread_futures) {
+				bool success = f.get(); // This will wait for the thread to finish
+				if (!success) {
+					std::cerr << "Failed to process some videos" << std::endl;
+				}
+			}
+
+			for (int i = frame_id; i <= frame_id + ready_cache_size; i+=frame_step)
+			{	
+				std::cout << "Preloading frame " << i << std::endl;
+				loadVideo_func(i);
+			}
+
+			_multi_view_play = false;
+
+			// request download and ready for frames around frame_id
+			// request download
+			int target_group_index = frame_id / num_frames;
+			for (int i = 1; i < download_cache_size; i++) {
+				if (target_group_index + i >= 0 && target_group_index + i < group_frame_index.size()) {
+					int download_start_index = group_frame_index[target_group_index + i].first;
+					if (downloaded_array[download_start_index] == 0) {
+						std::cout << "[onGUI] Requesting group " << target_group_index + i << " to be downloaded." << std::endl;
+						need_download_q.push(target_group_index + i);
+						cv_download.notify_one();
+					}
 				}
 			}
 		}		
@@ -1080,12 +1173,6 @@ void sibr::GaussianView::onGUI()
 		// empty all cuda memory
 		for (int i = 0; i < sequences_length; i++) {
 			if (ready_array[i] == 1) {
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[i]));
 				// set ready to 0
 				ready_array[i] = 0;
 			}
@@ -1166,6 +1253,7 @@ void sibr::GaussianView::onGUI()
 				std::cerr << "Failed to process some videos" << std::endl;
 			}
 		}
+		num_frames = download_end_index - download_start_index + 1;
 		downloaded_frames = download_end_index;
 		std::fill(downloaded_array + download_start_index, downloaded_array + download_end_index + 1, 1);
 		// ready all frames in the group just need current to download end
@@ -1277,17 +1365,6 @@ void sibr::GaussianView::onGUI()
 sibr::GaussianView::~GaussianView()
 {
 	try {
-		// Clean up array resources
-		for (int i = 0; i < sequences_length; i++) {
-			if (ready_array[i] == 1) {
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(pos_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(rot_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(scale_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(opacity_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(shs_cuda_array[i]));
-				CUDA_SAFE_CALL_ALWAYS(cudaFree(rect_cuda_array[i]));
-			}
-		}
 		
 		// Properly stop threads before destruction
 		frame_changed = true;
@@ -1332,17 +1409,22 @@ sibr::GaussianView::~GaussianView()
 		}
 		
 		// CUDA cleanup
-		cudaFree(pos_cuda);
-		cudaFree(rot_cuda);
-		cudaFree(scale_cuda);
-		cudaFree(opacity_cuda);
-		cudaFree(shs_cuda);
+        for(int i = 0; i < GPU_RING_BUFFER_SLOTS; ++i)
+        {
+            CUDA_SAFE_CALL_ALWAYS(cudaStreamDestroy(data_streams[i]));
+            CUDA_SAFE_CALL_ALWAYS(cudaEventDestroy(data_events[i]));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].pos_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].rot_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].scale_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].opacity_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].shs_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].rect_cuda));
+        }
 
 		cudaFree(view_cuda);
 		cudaFree(proj_cuda);
 		cudaFree(cam_pos_cuda);
 		cudaFree(background_cuda);
-		cudaFree(rect_cuda);
 
 		if (!_interop_failed)
 		{
@@ -1374,3 +1456,4 @@ sibr::GaussianView::~GaussianView()
 		}
 	}
 }
+

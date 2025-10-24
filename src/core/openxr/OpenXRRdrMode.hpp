@@ -69,6 +69,7 @@ namespace sibr
         Vector3f m_prevLeftHandPosition;                         ///< Store previous left hand position for drag scene transformation
         Quaternionf m_prevRightHandOrientation;                  ///< Store previous right hand position for drag scene rotation
         float m_controlSensitivity = 0.1f;                       ///< Control move/rotation sensitivity
+        float m_controlSensitivity_t = 10.0f;                       ///< Control move/rotation sensitivity
         bool m_forceRenderVRPlaySpace = false;                   ///< Display or not the VR play space
         GLShader m_playSpaceShader;                              ///< Shader for drawing a red plane to represent the VR play space
         GLParameter m_playSpaceParamVP;                          ///< ViewProjection matrix uniform for play space shader
