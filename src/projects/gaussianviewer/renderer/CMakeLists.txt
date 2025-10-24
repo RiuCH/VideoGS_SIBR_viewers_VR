@@ -8,7 +8,8 @@
 # For inquiries contact sibr@inria.fr and/or George.Drettakis@inria.fr
 
 set(SIBR_PROJECT "gaussian")
-project(sibr_${SIBR_PROJECT} LANGUAGES CXX)
+# Add CUDA to the languages
+project(sibr_${SIBR_PROJECT} LANGUAGES CXX CUDA)
 
 sibr_gitlibrary(TARGET CudaRasterizer
     GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
@@ -21,7 +22,11 @@ find_package(CURL REQUIRED)
 find_package(TBB REQUIRED)
 
 file(GLOB SOURCES "*.cpp" "*.h" "*.hpp")
+# Add a glob for .cu files
+file(GLOB CUDA_SOURCES "*.cu" "*.hpp")
 source_group("Source Files" FILES ${SOURCES})
+# Add a source group for CUDA files
+source_group("Source Files\\CUDA" FILES ${CUDA_SOURCES})
 
 file(GLOB SHADERS "shaders/*.frag" "shaders/*.vert" "shaders/*.geom")
 source_group("Source Files\\shaders" FILES ${SHADERS})
@@ -29,7 +34,8 @@ source_group("Source Files\\shaders" FILES ${SHADERS})
 file(GLOB SOURCES "*.cpp" "*.h" "*.hpp" "shaders/*.frag" "shaders/*.vert" "shaders/*.geom")
 
 ## Specify target rules
-add_library(${PROJECT_NAME} SHARED ${SOURCES})
+# Add CUDA_SOURCES to the library
+add_library(${PROJECT_NAME} SHARED ${SOURCES} ${CUDA_SOURCES})
 
 include_directories(${Boost_INCLUDE_DIRS} .)
 if (WIN32)
@@ -83,7 +89,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER "projects/${SIBR_PROJECT
 ## High level macro to install in an homogen way all our ibr targets
 include(install_runtime)
 ibr_install_target(${PROJECT_NAME}
-    INSTALL_PDB                         ## mean install also MSVC IDE *.pdb file (DEST according to target type)
+    INSTALL_PDB                       
+  ## mean install also MSVC IDE *.pdb file (DEST according to target type)
 	SHADERS ${SHADERS}
 	RSC_FOLDER ${SIBR_PROJECT}
 

@@ -101,182 +101,109 @@ bool image_dequan(const cv::Mat& m_att_img, std::vector<float>& gaussian_vector,
 // Load the Gaussians from the given png.
 void sibr::GaussianView::loadVideo_func(int frame_index)
 {
-	// // CRITICAL: Add bounds checking for frame_index
-	// if (frame_index < 0 || frame_index >= sequences_length) {
-	// 	std::cerr << "ERROR: Invalid frame_index " << frame_index 
-	// 	          << " (valid range: 0-" << sequences_length - 1 << ")" << std::endl;
-	// 	return;
-	// }
-	
-	// // Check if global_png_vector has data for this frame
-	// for (int att_idx = 0; att_idx < num_att_index; ++att_idx) {
-	// 	if (frame_index >= global_png_vector[att_idx].size()) {
-	// 		std::cerr << "ERROR: Frame " << frame_index << " not available in global_png_vector[" 
-	// 		          << att_idx << "] (size: " << global_png_vector[att_idx].size() << ")" << std::endl;
-	// 		return;
-	// 	}
-	// }
-	
-	// int json_index = frame_index % 101;
 	int json_index = frame_index;
 	int shs_dim = 3 * (_sh_degree + 1) * (_sh_degree + 1);
 	int ply_dim = (14 + shs_dim);
+
+	const int shs_dim_allocated = 3 * (3 + 1) * (3 + 1);
 
 	// get info from json
 	picojson::object frameobj = minmax_obj[std::to_string(json_index)].get<picojson::object>();
 	int m_count = static_cast<int>(frameobj["num"].get<double>());
 	picojson::array arr = frameobj["info"].get<picojson::array>();
-	std::vector<float> minmax_values;
+	std::vector<float> minmax_values; // This is the only CPU data we process
 	for (picojson::value& val : arr) {
 		float value = static_cast<float>(val.get<double>());
 		minmax_values.push_back(value);
 	}
-	// std::cout << minmax_values.size() << " " << ply_dim << std::endl;
 	if (minmax_values.size() != 2 * ply_dim) {
 		SIBR_ERR << "Error: " << "vector size not match" << std::endl;
+        return;
 	}
 
-	if (m_count > MAX_GAUSSIANS_PER_FRAME) {
+    // Check for buffer overflow
+    if (m_count > MAX_GAUSSIANS_PER_FRAME) {
         SIBR_ERR << "ERROR: Frame " << frame_index << " has " << m_count << " Gaussians, "
                  << "which is more than the pre-allocated buffer size of " 
                  << MAX_GAUSSIANS_PER_FRAME << "!" << std::endl;
         return;
     }
 
-	std::vector<Pos> pos(m_count);
-	std::vector<Rot> rot(m_count);
-	std::vector<Scale> scale(m_count);
-	std::vector<float> opacity(m_count);
-	std::vector<SHs<3>> shs(m_count);
+    // All attribute images *must* have the same size.
+    int image_pixels = global_png_vector[0][frame_index].total(); // rows * cols
+    if (image_pixels > MAX_IMAGE_PIXELS) {
+        SIBR_ERR << "ERROR: Frame " << frame_index << " has images of size " << image_pixels << " pixels, "
+                 << "which is more than the pre-allocated buffer size of "
+                 << MAX_IMAGE_PIXELS << "!" << std::endl;
+        return;
+    }
+    int num_att_to_copy = ply_dim + 3; // This is num_att_index
+    if (num_att_to_copy > MAX_ATTRIBUTES) {
+         SIBR_ERR << "ERROR: Frame " << frame_index << " requires " << num_att_to_copy << " attributes, "
+                 << "which is more than the pre-allocated buffer size of "
+                 << MAX_ATTRIBUTES << "!" << std::endl;
+        return;
+    }
 
-	std::vector<std::vector<float>> gaussian_data(ply_dim - 3);
-	// xyz, fdc 012, frest0 - 44, opacity, scale 012, rot 0123
-	//0 1 2,  3 4 5 , 6 - 50    , 51     , 52 53 54, 55 56 57 58
-
-	// xyz, fdc 012, frest0 - 8, opacity, scale 012, rot 0123
-	//0 1 2,  3 4 5 , 6 - 14    , 15     , 16 17 18, 19 20 21 22
-
-	auto start = std::chrono::high_resolution_clock::now();
-	// pos using single thread
-	for (size_t att_index = 0; att_index <= 2; att_index ++) {
-		float min = minmax_values[2 * att_index];
-		float max = minmax_values[2 * att_index + 1];
-		const cv::Mat& att_even_img = global_png_vector[att_index * 2][frame_index];
-		const cv::Mat& att_odd_img = global_png_vector[att_index * 2 + 1][frame_index];
-
-		int total_pixels = att_even_img.rows * att_even_img.cols;
-		std::vector<uint8_t> even_bytes(total_pixels), odd_bytes(total_pixels);
-		std::memcpy(even_bytes.data(), att_even_img.data, total_pixels * sizeof(uint8_t));
-		std::memcpy(odd_bytes.data(), att_odd_img.data, total_pixels * sizeof(uint8_t));
-		std::vector<uint16_t> combined(total_pixels);
-		std::transform(std::execution::par, even_bytes.begin(), even_bytes.end(), odd_bytes.begin(), combined.begin(), [](uint8_t e, uint8_t o) {
-			uint16_t result = 0;
-			// for (int j = 0; j < 8; j++) {
-			// 	uint16_t even_bit = (e >> j) & 1;
-			// 	uint16_t odd_bit = (o >> j) & 1;
-			// 	result |= (even_bit << (2 * j)) | (odd_bit << (2 * j + 1));
-			// }
-			// change e to 16 bit
-			uint16_t odd = o;
-			result = (odd << 8) | e;
-			return result;
-		});
-		cv::Mat att_img = cv::Mat(att_even_img.size(), CV_16UC1, combined.data());
-
-		att_img.convertTo(att_img, CV_32F, 1.0 / (std::pow(2.0, 16) - 1.0));
-		cv::Mat dequantized_img = att_img * (max - min) + min;
-		// convert to 1D vector
-		std::vector<float> deimg_vector(dequantized_img.rows * dequantized_img.cols);
-		if (dequantized_img.isContinuous()) {
-			deimg_vector.assign((float*)dequantized_img.datastart, (float*)dequantized_img.dataend);
-		}
-		gaussian_data[att_index] = deimg_vector;
-	}
-
-	// other attributes using multithreading
-	std::vector<std::future<bool>> thread_futures;
-	for (size_t att_index = 6; att_index < ply_dim; att_index ++) {
-		float min = minmax_values[2 * att_index];
-		float max = minmax_values[2 * att_index + 1];
-		// std::cout << "666666666" << std::endl;
-		thread_futures.push_back(std::async(std::launch::async, image_dequan, global_png_vector[att_index + 3][frame_index], std::ref(gaussian_data[att_index - 3]), max, min));
-	}
-	for (auto& f : thread_futures) {
-		bool success = f.get(); // This will wait for the thread to finish
-		if (!success) {
-			std::cerr << "Failed to process some videos" << std::endl;
-		}
-	}
-	auto end = std::chrono::high_resolution_clock::now();
-	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-	// std::cout << frame_index << "First For Elapsed time: " << elapsed.count() << " ms" << std::endl;
-
-	// std::cout << "Debuggggggggggg" << std::endl;
-
-	start = std::chrono::high_resolution_clock::now();
-	// Add a check to ensure gaussian_data has enough elements
-	for(int i = 0; i < ply_dim - 3; ++i) {
-		if (gaussian_data[i].size() < m_count) {
-			std::cerr << "ERROR: Not enough data for attribute " << i << " in frame " << frame_index 
-					  << ". Expected at least " << m_count << " elements, but got " << gaussian_data[i].size() << "." << std::endl;
-			// You might want to handle this error more gracefully, e.g., by returning or throwing an exception
-			return; 
-		}
-	}
-	for (size_t index = 0; index < m_count; index++) {
-		// preprocessed
-		pos[index].x() = gaussian_data[0][index];
-		pos[index].y() = gaussian_data[1][index];
-		pos[index].z() = gaussian_data[2][index];
-		rot[index].rot[0] = gaussian_data[ply_dim - 7][index];
-		rot[index].rot[1] = gaussian_data[ply_dim - 6][index];
-		rot[index].rot[2] = gaussian_data[ply_dim - 5][index];
-		rot[index].rot[3] = gaussian_data[ply_dim - 4][index];
-		scale[index].scale[0] = gaussian_data[ply_dim - 10][index];
-		scale[index].scale[1] = gaussian_data[ply_dim - 9][index];
-		scale[index].scale[2] = gaussian_data[ply_dim - 8][index];
-		opacity[index] = gaussian_data[ply_dim - 11][index];
-		// for (int j = 0; j <= 44; j += 4) {
-		// 	shs[index].shs[j] = gaussian_data[3 + j][index];
-		// 	shs[index].shs[j+1] = gaussian_data[3 + j+1][index];
-		// 	shs[index].shs[j+2] = gaussian_data[3 + j+2][index];
-		// 	shs[index].shs[j+3] = gaussian_data[3 + j+3][index];
-		// }
-		for (int j = 0; j < shs_dim; j++) {
-			shs[index].shs[j] = gaussian_data[3 + j][index];
-		}
-	}
-	end = std::chrono::high_resolution_clock::now();
-	elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-	// std::cout << frame_index << "Second For Elapsed time: " << elapsed.count() << " ms" << std::endl;
 	int slot = frame_index % GPU_RING_BUFFER_SLOTS;
     cudaStream_t stream = data_streams[slot];
     GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
 
-	start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    // Copy min/max table
+    CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.minmax_values_cuda, minmax_values.data(), 
+                                   minmax_values.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    // No more cudaMalloc! Just asynchronous copies to the pre-allocated buffer.
-	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.pos_cuda, pos.data(), sizeof(Pos) * m_count, cudaMemcpyHostToDevice, stream));
-	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.rot_cuda, rot.data(), sizeof(Rot) * m_count, cudaMemcpyHostToDevice, stream));
-	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.scale_cuda, scale.data(), sizeof(Scale) * m_count, cudaMemcpyHostToDevice, stream));
-	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.opacity_cuda, opacity.data(), sizeof(float) * m_count, cudaMemcpyHostToDevice, stream));
-	CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.shs_cuda, shs.data(), sizeof(SHs<3>) * m_count, cudaMemcpyHostToDevice, stream));
-	
-    // We still need a temporary host-side buffer for rects, or just use the vector.
-    std::vector<int> rects_host(2 * m_count, 0); // Replaces cudaMalloc+cudaMemset
-    CUDA_SAFE_CALL(cudaMemcpyAsync(current_slot.rect_cuda, rects_host.data(), 2 * m_count * sizeof(int), cudaMemcpyHostToDevice, stream));
+    // Copy all raw attribute images contiguously
+    uint8_t* d_raw_image_ptr = current_slot.raw_attributes_cuda;
+    for (int i = 0; i < num_att_to_copy; ++i)
+    {
+        cv::Mat& img = global_png_vector[i][frame_index];
+        if (img.total() != image_pixels) {
+            SIBR_ERR << "ERROR: Attribute image " << i << " has mismatched size!";
+            // Handle error...
+        }
+        CUDA_SAFE_CALL(cudaMemcpyAsync(d_raw_image_ptr, img.data, 
+                                       image_pixels * sizeof(uint8_t), cudaMemcpyHostToDevice, stream));
+        d_raw_image_ptr += image_pixels * sizeof(uint8_t);
+    }
 
-	P_array[frame_index] = m_count;
-	end = std::chrono::high_resolution_clock::now();
-	elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-	// std::cout << frame_index << "CUDA memcopy Elapsed time: " << elapsed.count() << " ms" << std::endl;
+    unsigned int threads = 256;
+    unsigned int blocks = (m_count + threads - 1) / threads;
+
+    launch_dequantize_kernel(
+        blocks,
+        threads,
+        stream,
+        m_count,
+        image_pixels,
+        ply_dim,
+        shs_dim,
+		shs_dim_allocated,
+        current_slot.raw_attributes_cuda,
+        current_slot.minmax_values_cuda,
+        current_slot.pos_cuda,
+        current_slot.rot_cuda,
+        current_slot.scale_cuda,
+        current_slot.opacity_cuda,
+        current_slot.shs_cuda
+    );
+    
+    // Memset the rect buffer (still needed for culling)
+	CUDA_SAFE_CALL(cudaMemsetAsync(current_slot.rect_cuda, 0, 2 * m_count * sizeof(int), stream));
 	
+    P_array[frame_index] = m_count;
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+	// std::cout << frame_index << "CUDA Kernel Launch Elapsed time: " << elapsed.count() << " ms" << std::endl;
+
     // Record an event in the stream. The render thread will wait for this.
     CUDA_SAFE_CALL(cudaEventRecord(data_events[slot], stream));
 
 	ready_array[frame_index] = 1;
 	ready_frames = frame_index;
-	// std::cout << "ready_frames: " << ready_frames << std::endl;
 }
 
 // ready gaussian
@@ -522,7 +449,7 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 
 	// start timer
 
-	int shs_size = sizeof(SHs<3>); // sh_degree is 3
+	const int shs_size_allocated = sizeof(SHs<3>);
 	for (int i = 0; i < GPU_RING_BUFFER_SLOTS; ++i)
 	{
 		CUDA_SAFE_CALL_ALWAYS(cudaStreamCreate(&data_streams[i]));
@@ -532,8 +459,11 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].rot_cuda, sizeof(Rot) * MAX_GAUSSIANS_PER_FRAME));
 		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].scale_cuda, sizeof(Scale) * MAX_GAUSSIANS_PER_FRAME));
 		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].opacity_cuda, sizeof(float) * MAX_GAUSSIANS_PER_FRAME));
-		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].shs_cuda, shs_size * MAX_GAUSSIANS_PER_FRAME));
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].shs_cuda, shs_size_allocated * MAX_GAUSSIANS_PER_FRAME));
 		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].rect_cuda, 2 * MAX_GAUSSIANS_PER_FRAME * sizeof(int)));
+
+		CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].raw_attributes_cuda, MAX_ATTRIBUTES * MAX_IMAGE_PIXELS * sizeof(uint8_t)));
+        CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].minmax_values_cuda, MAX_ATTRIBUTES * 2 * sizeof(float)));
 	}
 	
 	auto start = std::chrono::high_resolution_clock::now();
@@ -1419,6 +1349,9 @@ sibr::GaussianView::~GaussianView()
             CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].opacity_cuda));
             CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].shs_cuda));
             CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].rect_cuda));
+
+			CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].raw_attributes_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].minmax_values_cuda));
         }
 
 		cudaFree(view_cuda);

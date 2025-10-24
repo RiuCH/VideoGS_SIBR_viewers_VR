@@ -41,9 +41,11 @@
 #include <sys/sysinfo.h>
 #endif
 
+#include "kernels.hpp"
+
 #define SEQUENCE_LENGTH 1000
 
-#define MAX_GAUSSIANS_PER_FRAME 2000000 
+#define MAX_GAUSSIANS_PER_FRAME 1500000 
 
 #define GPU_RING_BUFFER_SLOTS 20
 
@@ -64,6 +66,9 @@ namespace sibr {
         float* opacity_cuda = nullptr;
         float* shs_cuda = nullptr;
         int* rect_cuda = nullptr;
+
+		uint8_t* raw_attributes_cuda = nullptr;
+        float* minmax_values_cuda = nullptr;
     };
 
 	/**
