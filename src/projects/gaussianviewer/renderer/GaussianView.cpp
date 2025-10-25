@@ -347,7 +347,7 @@ void sibr::GaussianView::loadBackground(const std::string& ply_path)
     // Convert to separate attribute vectors
 	// This assumes the PLY stores SHs up to degree 3
     for (int i = 0; i < background_count; ++i) {
-        pos_vec[i] = Pos(ply_data[i].x, ply_data[i].y, ply_data[i].z);
+        pos_vec[i] = Pos(ply_data[i].x * background_scale, ply_data[i].y * background_scale, ply_data[i].z * background_scale);
 
         // Normalize rotation quaternion
         double norm = std::sqrt(ply_data[i].rot_0 * ply_data[i].rot_0 +
@@ -360,9 +360,9 @@ void sibr::GaussianView::loadBackground(const std::string& ply_path)
         rot_vec[i].rot[3] = static_cast<float>(ply_data[i].rot_3 / norm);
 
         // Apply exp to scale
-        scale_vec[i].scale[0] = std::exp(ply_data[i].scale_0);
-        scale_vec[i].scale[1] = std::exp(ply_data[i].scale_1);
-        scale_vec[i].scale[2] = std::exp(ply_data[i].scale_2);
+        scale_vec[i].scale[0] = std::exp(ply_data[i].scale_0) * background_scale;;
+        scale_vec[i].scale[1] = std::exp(ply_data[i].scale_1) * background_scale;;
+        scale_vec[i].scale[2] = std::exp(ply_data[i].scale_2) * background_scale;;
 
         // Apply sigmoid to opacity
         opacity_vec[i] = sigmoid(ply_data[i].opacity);

@@ -131,6 +131,7 @@ namespace sibr {
         /** Load static background Gaussians from a PLY file. */
         void loadBackground(const std::string& ply_path);
 		std:: string _background_ply_path = "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply";
+		float background_scale = 100.0f;
 
 		std::string currMode = "Splats";
 		int _sh_degree = 1;
