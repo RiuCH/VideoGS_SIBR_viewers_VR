@@ -57,11 +57,25 @@ template<int D>
 struct RichPoint
 {
 	Pos pos;
-	float n[3];
+	float n[3]; // normals, unused in splatting but often in PLY
 	SHs<D> shs;
 	float opacity;
 	Scale scale;
 	Rot rot;
+};
+
+// Define a structure for the PLY data we expect for background
+// This matches the ordering in many 3DGS PLY files.
+// SH degree is assumed to be 3.
+struct PlyGaussian
+{
+    float x, y, z;
+    float nx, ny, nz;
+    float f_dc_0, f_dc_1, f_dc_2;
+    float f_rest[45]; // SHs rest
+    float opacity;
+    float scale_0, scale_1, scale_2;
+    float rot_0, rot_1, rot_2, rot_3;
 };
 
 float sigmoid(const float m1)
@@ -278,6 +292,107 @@ unsigned long long getNetReceivedBytes() {
     return 0;
 };
 
+// Minimal PLY loader for background
+// WARNING: Assumes binary_little_endian format and specific property order.
+void sibr::GaussianView::loadBackground(const std::string& ply_path)
+{
+	SIBR_LOG << "Loading background PLY: " << ply_path << std::endl;
+    std::ifstream file(ply_path, std::ios::binary);
+    if (!file.is_open()) {
+        SIBR_ERR << "ERROR: Could not open PLY file: " << ply_path;
+        return;
+    }
+
+    std::string line;
+    int vertex_count = 0;
+    std::string format;
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        std::string token;
+        ss >> token;
+        if (token == "format") {
+            ss >> format;
+        } else if (token == "element") {
+            std::string type;
+            ss >> type;
+            if (type == "vertex") {
+                ss >> vertex_count;
+            }
+        } else if (token == "end_header") {
+            break;
+        }
+    }
+
+    if (format != "binary_little_endian" || vertex_count == 0) {
+        SIBR_ERR << "ERROR: Unsupported PLY format (" << format << ") or zero vertices for background.";
+        file.close();
+        return;
+    }
+
+	background_count = vertex_count;
+    SIBR_LOG << "Background vertex count: " << background_count;
+
+    // Allocate CPU vectors
+    std::vector<Pos> pos_vec(background_count);
+    std::vector<Rot> rot_vec(background_count);
+    std::vector<Scale> scale_vec(background_count);
+    std::vector<float> opacity_vec(background_count);
+    std::vector<SHs<3>> shs_vec(background_count);
+
+    // Read raw data
+    std::vector<PlyGaussian> ply_data(background_count);
+    file.read(reinterpret_cast<char*>(ply_data.data()), background_count * sizeof(PlyGaussian));
+    file.close();
+
+    // Convert to separate attribute vectors
+	// This assumes the PLY stores SHs up to degree 3
+    for (int i = 0; i < background_count; ++i) {
+        pos_vec[i] = Pos(ply_data[i].x, ply_data[i].y, ply_data[i].z);
+
+        // Normalize rotation quaternion
+        double norm = std::sqrt(ply_data[i].rot_0 * ply_data[i].rot_0 +
+                                ply_data[i].rot_1 * ply_data[i].rot_1 +
+                                ply_data[i].rot_2 * ply_data[i].rot_2 +
+                                ply_data[i].rot_3 * ply_data[i].rot_3);
+        rot_vec[i].rot[0] = static_cast<float>(ply_data[i].rot_0 / norm);
+        rot_vec[i].rot[1] = static_cast<float>(ply_data[i].rot_1 / norm);
+        rot_vec[i].rot[2] = static_cast<float>(ply_data[i].rot_2 / norm);
+        rot_vec[i].rot[3] = static_cast<float>(ply_data[i].rot_3 / norm);
+
+        // Apply exp to scale
+        scale_vec[i].scale[0] = std::exp(ply_data[i].scale_0);
+        scale_vec[i].scale[1] = std::exp(ply_data[i].scale_1);
+        scale_vec[i].scale[2] = std::exp(ply_data[i].scale_2);
+
+        // Apply sigmoid to opacity
+        opacity_vec[i] = sigmoid(ply_data[i].opacity);
+
+        // Copy SHs
+        shs_vec[i].shs[0] = ply_data[i].f_dc_0;
+        shs_vec[i].shs[1] = ply_data[i].f_dc_1;
+        shs_vec[i].shs[2] = ply_data[i].f_dc_2;
+        memcpy(&shs_vec[i].shs[3], ply_data[i].f_rest, 45 * sizeof(float));
+    }
+
+    // Allocate GPU memory for background
+	const int shs_size_allocated = sizeof(SHs<3>);
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_pos_cuda, sizeof(Pos) * background_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_rot_cuda, sizeof(Rot) * background_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_scale_cuda, sizeof(Scale) * background_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_opacity_cuda, sizeof(float) * background_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_shs_cuda, shs_size_allocated * background_count));
+
+    // Copy to GPU
+    CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_pos_cuda, pos_vec.data(), sizeof(Pos) * background_count, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_rot_cuda, rot_vec.data(), sizeof(Rot) * background_count, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_scale_cuda, scale_vec.data(), sizeof(Scale) * background_count, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_opacity_cuda, opacity_vec.data(), sizeof(float) * background_count, cudaMemcpyHostToDevice));
+    CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_shs_cuda, shs_vec.data(), shs_size_allocated * background_count, cudaMemcpyHostToDevice));
+
+	SIBR_LOG << "Background PLY loaded successfully.";
+}
+
+
 namespace sibr
 {
 	static float s_fps = 30.0f; // Frames per second for video playback
@@ -370,7 +485,6 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	CUDA_SAFE_CALL_ALWAYS(cudaSetDevice(device));
 	cudaDeviceProp prop;
 	CUDA_SAFE_CALL_ALWAYS(cudaGetDeviceProperties(&prop, device));
- 
 
 	_pointbasedrenderer.reset(new PointBasedRenderer());
 	_copyRenderer = new BufferCopyRenderer();
@@ -478,6 +592,25 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
         CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&gpu_ring_buffer[i].minmax_values_cuda, MAX_ATTRIBUTES * 2 * sizeof(float)));
 	}
 	
+    // --- Load background ---
+    if (!_background_ply_path.empty()) {
+        loadBackground(_background_ply_path);
+    }
+
+    // --- Allocate combined buffers ---
+    combined_buffer_allocated_count = background_count + MAX_GAUSSIANS_PER_FRAME;
+    SIBR_LOG << "Allocating combined buffers for " << combined_buffer_allocated_count << " Gaussians.";
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_pos_cuda, sizeof(Pos) * combined_buffer_allocated_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_rot_cuda, sizeof(Rot) * combined_buffer_allocated_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_scale_cuda, sizeof(Scale) * combined_buffer_allocated_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_opacity_cuda, sizeof(float) * combined_buffer_allocated_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_shs_cuda, shs_size_allocated * combined_buffer_allocated_count));
+    CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&combined_rect_cuda, 2 * combined_buffer_allocated_count * sizeof(int)));
+
+    // --- Create combine stream ---
+    CUDA_SAFE_CALL_ALWAYS(cudaStreamCreate(&combine_stream));
+    CUDA_SAFE_CALL_ALWAYS(cudaEventCreate(&combine_event));
+
 	auto start = std::chrono::high_resolution_clock::now();
 	// std::cout << "preload index start: " << group_frame_index[0].first << std::endl;
 	// std::cout << "preload index end: " << group_frame_index[0].second << std::endl;
@@ -504,13 +637,15 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
     CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[first_slot]));
     std::cout << "Frame 0 is ready." << std::endl;
 
-	count = P_array[0];
-	pos_cuda = gpu_ring_buffer[first_slot].pos_cuda;
-	rot_cuda = gpu_ring_buffer[first_slot].rot_cuda;
-	scale_cuda = gpu_ring_buffer[first_slot].scale_cuda;
-	opacity_cuda = gpu_ring_buffer[first_slot].opacity_cuda;
-	shs_cuda = gpu_ring_buffer[first_slot].shs_cuda;
-	rect_cuda = gpu_ring_buffer[first_slot].rect_cuda;
+    // Set render pointers to the combined buffers
+    // The initial 'count' will be set in the first onUpdate call.
+	count = 0; 
+	pos_cuda = combined_pos_cuda;
+	rot_cuda = combined_rot_cuda;
+	scale_cuda = combined_scale_cuda;
+	opacity_cuda = combined_opacity_cuda;
+	shs_cuda = combined_shs_cuda;
+	rect_cuda = combined_rect_cuda;
 
 	_gaussianRenderer = new GaussianSurfaceRenderer();
 	createImageBuffer();
@@ -791,6 +926,12 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
         return;
 	}
 
+    // Wait for the combine stream (if data is being composited)
+    if (count > 0) {
+        // Wait on the default stream (stream 0) for the combine_event to complete
+        CUDA_SAFE_CALL(cudaStreamWaitEvent(0, combine_event, 0));
+    }
+
 	if (currMode == "Ellipsoids")
 	{
 		// stop ellipsoid rendering to avoid loading gData
@@ -840,6 +981,7 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 		}
 		
 		// Check for null required pointers
+		// Note: pos_cuda, shs_cuda etc. now point to combined buffers
 		if (!pos_cuda || !opacity_cuda || !scale_cuda || !rot_cuda || !view_cuda || 
 		    !proj_cuda || !cam_pos_cuda || !background_cuda || !image_cuda) {
 			SIBR_ERR << "Null pointer detected in CUDA parameters" << std::endl;
@@ -985,17 +1127,61 @@ void sibr::GaussianView::onUpdate(Input & input)
             // the render thread will pause here until the data is on the GPU.
             CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[slot]));
 
-            if (P_array[current_frame_id] > 0) {
-                GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
-			    count = P_array[current_frame_id];
-			    pos_cuda = current_slot.pos_cuda;
-			    rot_cuda = current_slot.rot_cuda;
-			    scale_cuda = current_slot.scale_cuda;
-			    opacity_cuda = current_slot.opacity_cuda;
-			    shs_cuda = current_slot.shs_cuda;
-			    rect_cuda = current_slot.rect_cuda;
+            int dynamic_count = P_array[current_frame_id];
 
-				_slider_seek_active = false;
+            if (dynamic_count > 0 || background_count > 0) {
+                GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
+                
+                // Destination pointers for combined buffers
+                float* d_pos_dst = combined_pos_cuda;
+                float* d_rot_dst = combined_rot_cuda;
+                float* d_scale_dst = combined_scale_cuda;
+                float* d_opacity_dst = combined_opacity_cuda;
+                float* d_shs_dst = combined_shs_cuda;
+                int* d_rect_dst = combined_rect_cuda;
+
+                const int shs_size_allocated = sizeof(SHs<3>);
+                size_t shs_floats_per_gaussian = shs_size_allocated / sizeof(float);
+
+                // 1. Copy background (if it exists)
+                if (background_count > 0) {
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, background_pos_cuda, sizeof(Pos) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    d_pos_dst += background_count * 3; // 3 floats per Pos
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, background_rot_cuda, sizeof(Rot) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    d_rot_dst += background_count * 4; // 4 floats per Rot
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, background_scale_cuda, sizeof(Scale) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    d_scale_dst += background_count * 3; // 3 floats per Scale
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, background_opacity_cuda, sizeof(float) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    d_opacity_dst += background_count;
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, background_shs_cuda, shs_size_allocated * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    d_shs_dst += background_count * shs_floats_per_gaussian;
+                    if (_fastCulling) {
+                        // Clear rects for static background
+                        CUDA_SAFE_CALL(cudaMemsetAsync(d_rect_dst, 0, 2 * sizeof(int) * background_count, combine_stream));
+                        d_rect_dst += background_count * 2;
+                    }
+                }
+
+                // 2. Copy dynamic frame data *after* background data
+                if (dynamic_count > 0) {
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, current_slot.pos_cuda, sizeof(Pos) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, current_slot.rot_cuda, sizeof(Rot) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, current_slot.scale_cuda, sizeof(Scale) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, current_slot.opacity_cuda, sizeof(float) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, current_slot.shs_cuda, shs_size_allocated * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    if (_fastCulling) {
+                        // Copy rects for dynamic part
+                        CUDA_SAFE_CALL(cudaMemcpyAsync(d_rect_dst, current_slot.rect_cuda, 2 * sizeof(int) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+                    }
+                }
+                
+                // Record event when copies are done
+                CUDA_SAFE_CALL(cudaEventRecord(combine_event, combine_stream));
+
+                // Set render pointers (they already point to combined buffers, just set count)
+                count = background_count + dynamic_count;
+
+			    _slider_seek_active = false;
             } else {
                 count = 0;
             }
@@ -1364,6 +1550,24 @@ sibr::GaussianView::~GaussianView()
             CUDA_SAFE_CALL_ALWAYS(cudaFree(gpu_ring_buffer[i].minmax_values_cuda));
         }
 
+        if (background_pos_cuda) {
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(background_pos_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(background_rot_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(background_scale_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(background_opacity_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(background_shs_cuda));
+        }
+        if (combined_pos_cuda) {
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_pos_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_rot_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_scale_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_opacity_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_shs_cuda));
+            CUDA_SAFE_CALL_ALWAYS(cudaFree(combined_rect_cuda));
+        }
+        CUDA_SAFE_CALL_ALWAYS(cudaStreamDestroy(combine_stream));
+        CUDA_SAFE_CALL_ALWAYS(cudaEventDestroy(combine_event));
+
 		cudaFree(view_cuda);
 		cudaFree(proj_cuda);
 		cudaFree(cam_pos_cuda);
@@ -1399,4 +1603,6 @@ sibr::GaussianView::~GaussianView()
 		}
 	}
 }
+
+
 

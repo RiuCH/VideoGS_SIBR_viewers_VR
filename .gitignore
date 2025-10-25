@@ -15,9 +15,13 @@ __pycache__/
 *.log
 *.sh
 *.tmp
-
+*.so
+*CMakeFiles*
+CMakeCache.txt
+*.cmake
+*Makefile*
 hs_err_*
-
+archive/
 # re include common public projects
 !src/projects/ulr/
 !src/projects/dataset_tools/

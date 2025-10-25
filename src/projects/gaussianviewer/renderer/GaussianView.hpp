@@ -40,6 +40,7 @@
 #ifdef __linux__
 #include <sys/sysinfo.h>
 #endif
+#include <fstream> // Added for PLY loading
 
 #include "kernels.hpp"
 
@@ -47,7 +48,7 @@
 
 #define MAX_GAUSSIANS_PER_FRAME 1500000 
 
-#define GPU_RING_BUFFER_SLOTS 20
+#define GPU_RING_BUFFER_SLOTS 10
 
 namespace CudaRasterizer
 {
@@ -86,6 +87,7 @@ namespace sibr {
 		 * \param ibrScene The scene to use for rendering.
 		 * \param render_w rendering width
 		 * \param render_h rendering height
+		 * \param file Path to the static background PLY file (can be nullptr or empty)
 		 */
 		GaussianView(const sibr::BasicIBRScene::Ptr& ibrScene, uint render_w, uint render_h, const char* file, bool* message_read, bool white_bg = false, bool useInterop = true, int device = 0);
 
@@ -126,6 +128,10 @@ namespace sibr {
 
 	protected:
 
+        /** Load static background Gaussians from a PLY file. */
+        void loadBackground(const std::string& ply_path);
+		std:: string _background_ply_path = "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply";
+
 		std::string currMode = "Splats";
 		int _sh_degree = 1;
 		int frame_st = 0;
@@ -141,24 +147,25 @@ namespace sibr {
 		int num_att_index = 29;
 		int sequences_length = 0;
 
-		int ready_cache_size = 20;
+		int ready_cache_size = 10;
 		int download_cache_size = 3;
 		std::mutex mtx_frame_id;
 
-		int count;
+		int count; // Total count (background + dynamic) for rendering
+		// Pointers to the *combined* buffers for rendering
 		float* pos_cuda;
 		float* rot_cuda;
 		float* scale_cuda;
 		float* opacity_cuda;
 		float* shs_cuda;
 		int* rect_cuda;
-		int P_array[SEQUENCE_LENGTH];
+		int P_array[SEQUENCE_LENGTH]; // Count for *dynamic* frames
 
 		GpuFrameSlot gpu_ring_buffer[GPU_RING_BUFFER_SLOTS];
         cudaStream_t data_streams[GPU_RING_BUFFER_SLOTS];
         cudaEvent_t data_events[GPU_RING_BUFFER_SLOTS];
 
-		std::string _background_ply_path;
+        // --- Background Data Buffers (Static) ---
         int background_count = 0;
         float* background_pos_cuda = nullptr;
         float* background_rot_cuda = nullptr;
@@ -306,4 +313,4 @@ namespace sibr {
 
 	};
 
-} /*namespace sibr*/ 
+} /*namespace sibr*/
