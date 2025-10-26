@@ -48,7 +48,7 @@
 
 #define MAX_GAUSSIANS_PER_FRAME 1500000 
 
-#define GPU_RING_BUFFER_SLOTS 10
+#define GPU_RING_BUFFER_SLOTS 15
 
 namespace CudaRasterizer
 {
@@ -148,7 +148,7 @@ namespace sibr {
 		int num_att_index = 29;
 		int sequences_length = 0;
 
-		int ready_cache_size = 10;
+		int ready_cache_size = 15;
 		int download_cache_size = 3;
 		std::mutex mtx_frame_id;
 

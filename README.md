@@ -1,15 +1,6 @@
-# Streaming Volumetric Video SIBR Viewer for V3: Viewing Volumetric Videos on Mobiles via Streamable 2D Dynamic Gaussians
+# Streaming Volumetric Video SIBR Viewer for VR applciation
 
-Official implementation of the streaming volumetric video viewer for _V^3: Viewing Volumetric Videos on Mobiles via Streamable 2D Dynamic Gaussians_.
-
-**[Penghao Wang*](https://authoritywang.github.io/), [Zhirui Zhang*](https://github.com/zhangzhr4), [Liao Wang*](https://aoliao12138.github.io/), [Kaixin Yao](https://yaokxx.github.io/), [Siyuan Xie](https://simonxie2004.github.io/about/), [Jingyi Yu†](http://www.yu-jingyi.com/cv/), [Minye Wu†](https://wuminye.github.io/), [Lan Xu†](https://www.xu-lan.com/)**
-
-**SIGGRAPH Asia 2024 (ACM Transactions on Graphics)**
-
-| [Webpage](https://authoritywang.github.io/v3/) | [Paper](https://arxiv.org/pdf/2409.13648) | [Video](https://youtu.be/Z5La9AporRU?si=P95fDRxVYhXZEzYT) | [Training Code](https://github.com/AuthorityWang/VideoGS) | [SIBR Viewer Code](https://github.com/AuthorityWang/VideoGS_SIBR_viewers) | [IOS Viewer Code](https://github.com/zhangzhr4/VideoGS_IOS_viewers) |<br>
-![viewer](assets/viewer.png)
-
-Please note that the SIBR viewer is only tested on Ubuntu, maybe not work for other platforms due to the video codec. 
+<img src="assets/viewer.gif" width="1024">
 
 ## Installation
 
@@ -20,6 +11,17 @@ sudo apt install -y libglew-dev libassimp-dev libboost-all-dev libgtk-3-dev libo
 cd VideoGS_SIBR_viewers
 cmake -Bbuild . -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90" -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++ -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
 cmake --build build -j24 --target install
+```
+
+If there is error building, might have to do the following
+1. #include <cstdint> in the rasterizer_impl.h file located at extlibs/CudaRasterizer/cuda_rasterizer/
+2. comment lines of code in extlibs/imgui/imgui/imgui.cpp
+
+```
+    // IM_ASSERT(g.CurrentWindowStack.Size == 1);    // Mismatched Begin()/End() calls
+    // if (g.CurrentWindow && !g.CurrentWindow->WriteAccessed)
+    //     g.CurrentWindow->Active = false;
+    // End();
 ```
 
 ## Usage
@@ -87,21 +89,3 @@ There are 3 threads will be lanuched when the viewer lanuched:
 - Thread 2 is for downloading the videos from the server and convert to gray scale images, this is implemented by OpenCV at `src/projects/gaussianviewer/renderer/OpenCVVideoDecoder.hpp`, we also implement a decoder with FFmpeg at `src/projects/gaussianviewer/renderer/GSVideoDecoder.hpp`, but we use the one with OpenCV in default.
 - Thread 3 is for converting images to gaussian data, which is implemented at `src/projects/gaussianviewer/renderer/GaussianView.cpp` function `readyVideo_func`. This function including data dequantization, convert to gaussian data, and memory copy to cuda. Please NOTE that for decoder efficiency, we remove the morton sort, normalize quaternion, expoentiate scale, activate alpha. Instead, we implement these steps when we compress the gaussian ckpt to videos after training. 
 
-## Acknowledgement
-
-This viewer is based on the original [gaussian-splatting viewer](https://github.com/graphdeco-inria/gaussian-splatting). 
-
-If you found our work useful, please kindly cite our paper:
-
-```
-@article{wang2024v,
-  title={V\^{} 3: Viewing Volumetric Videos on Mobiles via Streamable 2D Dynamic Gaussians},
-  author={Wang, Penghao and Zhang, Zhirui and Wang, Liao and Yao, Kaixin and Xie, Siyuan and Yu, Jingyi and Wu, Minye and Xu, Lan},
-  journal={ACM Transactions on Graphics (TOG)},
-  volume={43},
-  number={6},
-  pages={1--13},
-  year={2024},
-  publisher={ACM New York, NY, USA}
-}
-```
