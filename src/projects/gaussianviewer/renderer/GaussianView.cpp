@@ -841,9 +841,6 @@ void sibr::GaussianView::download_func() {
 				need_ready_q.push(j);
 			}
 			cv_ready.notify_one();
-			if (group_index == group_frame_index.size() - 1) {
-				break;
-			}
 		}
 	}
 }
@@ -1071,7 +1068,7 @@ void sibr::GaussianView::onUpdate(Input & input)
 		current_frame_id = frame_id;
 	}
 
-	if (!_slider_seek_active &&_multi_view_play.load()) {
+	if (_multi_view_play.load()) {
 		if (elapsed > frameDuration) {
 
 			if (ready_array[current_frame_id+1] == 1) {
@@ -1108,6 +1105,7 @@ void sibr::GaussianView::onUpdate(Input & input)
 				
 			} else {
 				std::cout << "[onUpdate] Waiting for frame after " << current_frame_id << " to become ready..." << std::endl;
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			}
 
 			if (current_frame_id >= sequences_length - 1) {
@@ -1181,7 +1179,6 @@ void sibr::GaussianView::onUpdate(Input & input)
                 // Set render pointers (they already point to combined buffers, just set count)
                 count = background_count + dynamic_count;
 
-			    _slider_seek_active = false;
             } else {
                 count = 0;
             }
@@ -1228,9 +1225,11 @@ void sibr::GaussianView::onGUI()
 		}
 		if (ImGui::SliderInt("Playing Frame", &frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
 			_multi_view_play = false; 
-   			_slider_seek_active = true;
-			
+			need_download_q = std::queue<int>(); 
+			need_ready_q = std::queue<int>(); 
 			std::cout << "frame_id changed to " << frame_id << std::endl;
+			ready_frames = frame_id + ready_cache_size - 1;
+			downloaded_frames = frame_id;
 			for (int i = 0; i < sequences_length; i++) {
 			
 				if (downloaded_array[i] == 1) {
@@ -1252,41 +1251,34 @@ void sibr::GaussianView::onGUI()
 			
 			int group_index = frame_id / num_frames;
 			int download_start_index = group_frame_index[group_index].first;
-			std::vector<std::future<bool>> thread_futures;
-			for (int att_index = 0; att_index < num_att_index; att_index ++) {
-					std::string videopath = folder + "group" + std::to_string(group_index) + "/" + std::to_string(att_index) + ".mp4";
-					thread_futures.push_back(std::async(std::launch::async, getAllFramesNew, videopath, download_start_index, std::ref(global_png_vector[att_index])));
-				}
-
-			for (auto& f : thread_futures) {
-				bool success = f.get(); // This will wait for the thread to finish
-				if (!success) {
-					std::cerr << "Failed to process some videos" << std::endl;
-				}
-			}
 			int download_end_index = group_frame_index[group_index].second;
-			std::fill(downloaded_array + download_start_index, downloaded_array + download_end_index, 1);
 
+			need_download_q.push(group_index);
+			cv_download.notify_one();
 
-			for (int i = download_start_index; i <= download_end_index; i+=frame_step)
+			for (int i = frame_id; i <= download_end_index; i+=frame_step)
 			{	
 				std::cout << "Preloading frame " << i << std::endl;
-				loadVideo_func(i);
+				need_ready_q.push(i);
+				cv_ready.notify_one();
 			}
+			
+			std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+			
 
 			// request download and ready for frames around frame_id
-			// request download
+			// request download 
 			int target_group_index = frame_id / num_frames;
-			for (int i = 1; i < download_cache_size; i++) {
+			for (int i = 1; i < download_cache_size + 1; i++) {
 				if (target_group_index + i >= 0 && target_group_index + i < group_frame_index.size()) {
 					int download_start_index = group_frame_index[target_group_index + i].first;
 					if (downloaded_array[download_start_index] == 0) {
 						std::cout << "[onGUI] Requesting group " << target_group_index + i << " to be downloaded." << std::endl;
 						need_download_q.push(target_group_index + i);
-						cv_download.notify_one();
 					}
 				}
 			}
+			cv_download.notify_one();
 		}		
 			
 		ImGui::SliderInt("Download Frame", &downloaded_frames, 0, sequences_length);

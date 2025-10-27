@@ -149,7 +149,7 @@ namespace sibr {
 		int sequences_length = 0;
 
 		int ready_cache_size = 15;
-		int download_cache_size = 3;
+		int download_cache_size = 10;
 		std::mutex mtx_frame_id;
 
 		int count; // Total count (background + dynamic) for rendering
@@ -222,6 +222,7 @@ namespace sibr {
 			// "http://127.0.0.1/atc_1_q0/",
 			// "http://127.0.0.1/atc_1_q25/",
 			// "http://127.0.0.1/atc_1_q25_nobg/",
+			"http://127.0.0.1/atc_1_q0_nobg_full/",
 			"http://127.0.0.1/atc_1_q0_nobg/",
 			// "http://127.0.0.1/png_all_0/",
 			// "http://127.0.0.1/png_all_0/",
