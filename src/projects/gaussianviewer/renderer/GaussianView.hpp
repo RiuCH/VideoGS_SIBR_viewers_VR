@@ -130,8 +130,7 @@ namespace sibr {
 
         /** Load static background Gaussians from a PLY file. */
         void loadBackground(const std::string& ply_path);
-		std:: string _background_ply_path = "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply";
-		float background_scale = 100.0f;
+		std:: string _background_ply_path; 
 
 		std::string currMode = "Splats";
 		int _sh_degree = 1;
@@ -149,7 +148,10 @@ namespace sibr {
 		int sequences_length = 0;
 
 		int ready_cache_size = 15;
+
+		// Fix load larger than size
 		int download_cache_size = 10;
+		// int download_cache_size = 4;
 		std::mutex mtx_frame_id;
 
 		int count; // Total count (background + dynamic) for rendering
@@ -198,55 +200,44 @@ namespace sibr {
 		// init network speed info
 		unsigned long long last_total_bytes = 0;
 		std::vector<float> net_speed_buffer;
-		// std::string folder = "http://10.15.89.67:10000/video_new_new/";
-		// std::string folder = "http://10.15.89.67:10000/video_new2_qp/video_qp20/";
-		// std::string folder = "http://10.15.89.67:10000/coser18_qp15_new/";
-		// std::string folder = "http://10.15.89.67:10000/1015hanfu_qp0/";
 		std::string folder;
 
-		int current_video_item = 0;
+		int current_video_item = 2;
 	std::vector<const char*> video_path = {
-			// "http://10.15.89.67:10000/wyw_hifivv/",
-			// "http://10.15.89.67:10000/hanfu3_qp15/",
-			// "http://10.15.89.67:10000/0923dancer3/",
-			// "http://10.15.89.67:10000/jywq_demo/",
-			// "http://10.15.89.67:10000/ykx_boxing_long_qp15/",
-			// "http://10.15.89.67:10000/jywq_qp15/",
-			// "http://10.15.89.67:10000/coser18_0503_qp15/",
-			// "http://10.15.89.67:10000/png_all_0/", 
-			// "http://10.15.89.67:10000/coser18_qp15_new/", 
-			// "http://10.15.89.67:10000/coser18_0503_qp0/", 
-			// "http://10.15.89.67:10000/1015hanfu_qp0/", 
-			// "http://10.15.89.67:10000/coser18_qp0_new/"
-			// "http://127.0.0.1/bicycle_static/",
-			// "http://127.0.0.1/atc_1_q0/",
-			// "http://127.0.0.1/atc_1_q25/",
-			// "http://127.0.0.1/atc_1_q25_nobg/",
+			"http://127.0.0.1/atc_hs/",
+			"http://127.0.0.1/dynamic_gs_basketball/",
 			"http://127.0.0.1/atc_1_q0_nobg_full/",
 			"http://127.0.0.1/atc_1_q0_nobg/",
 			// "http://127.0.0.1/png_all_0/",
 			// "http://127.0.0.1/png_all_0/",
 			"http://127.0.0.1/png_all_25/",
 			"http://127.0.0.1/png_all_50/",
-			"http://127.0.0.1/ykx_boxing_long_qp15_380/"
 
 		};
 		std::vector<int> video_sh = {
-			// 3,
 			0,
 			0,
 			0,
 			0,
 			0,
 			0,
-			0,
-			0,
-			1,
-			1,
-			3,
-			1,
-			3,
-			3
+		};
+
+		std:: vector<const char*> bg_paths = {
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			"",
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			"",
+			"",
+		};
+
+		std:: vector<float> bg_scales = {
+			1.0f,
+			1.0f,
+			100.0f,
+			100.0f,	
+			1.0f,	
 		};
 
 		std::chrono::milliseconds frameDuration; // 33ms per frame -> 30fps for dynamic play

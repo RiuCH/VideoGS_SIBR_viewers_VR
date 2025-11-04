@@ -330,6 +330,7 @@ void sibr::GaussianView::loadBackground(const std::string& ply_path)
     }
 
 	background_count = vertex_count;
+	float background_scale = bg_scales[current_video_item];
     SIBR_LOG << "Background vertex count: " << background_count;
 
     // Allocate CPU vectors
@@ -593,6 +594,7 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	}
 	
     // --- Load background ---
+	_background_ply_path = bg_paths[current_video_item];
     if (!_background_ply_path.empty()) {
         loadBackground(_background_ply_path);
     }
