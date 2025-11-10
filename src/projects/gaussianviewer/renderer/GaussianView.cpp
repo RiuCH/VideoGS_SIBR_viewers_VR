@@ -218,6 +218,7 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
 
 	ready_array[frame_index] = 1;
 	ready_frames = frame_index;
+	
 }
 
 // ready gaussian
@@ -268,10 +269,6 @@ void sibr::GaussianView::readyVideo_func() {
 		std::cout << "[readyVideo_func] Preparing to load frame " << i << std::endl;
 		loadVideo_func(i);
 		std::cout << "[readyVideo_func] Frame " << i << " is now ready." << std::endl;
-
-		if (i >= sequences_length) {
-			break;
-		}
 	}
 }
 
@@ -534,6 +531,7 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 		picojson::array name_index = innerObj["name_index"].get<picojson::array>();
 		group_name_index.push_back(std::make_pair((int)name_index[0].get<double>(), (int)name_index[1].get<double>()));
 	}
+	download_cache_size = std::min(download_cache_size, (int)num_groups);
 
 	// get last frame index
 	sequences_length = group_frame_index[group_frame_index.size() - 1].second;
@@ -835,14 +833,12 @@ void sibr::GaussianView::download_func() {
 				std::cout << "Cached group: " << group_index << std::endl;
 				std::cout << "Cached frame index: " << download_start_index << " " << download_end_index << std::endl;
 			}
-			downloaded_frames = download_end_index;
+			if (download_end_index > downloaded_frames) {
+				downloaded_frames = download_end_index;
+			}
 			std::fill(downloaded_array + download_start_index, downloaded_array + download_end_index + 1, 1);
 			std::lock_guard<std::mutex> lock(mtx_download);
-			for (int j = download_start_index; j <= download_end_index; j+=frame_step) {
-				// std::cout << "Need frame " << j << " to ready" << std::endl;
-				need_ready_q.push(j);
-			}
-			cv_ready.notify_one();
+
 		}
 	}
 }
@@ -1073,52 +1069,62 @@ void sibr::GaussianView::onUpdate(Input & input)
 	if (_multi_view_play.load()) {
 		if (elapsed > frameDuration) {
 
-			if (ready_array[current_frame_id+1] == 1) {
-				std::cout << "[onUpdate] Advancing from " << current_frame_id << " to " << current_frame_id + 1<< std::endl;
-				{ 
-                     std::lock_guard<std::mutex> lock(mtx_frame_id);
-                     frame_id = current_frame_id + 1;
-                     current_frame_id = frame_id; 
-                 }
-				lastUpdateTimestamp = now;
-				if (current_frame_id - 1 >= 0) {
-					ready_array[current_frame_id - 1] = 0;
+			int next_frame_id = -1;
 
-					// Free global png_vector to save memory
-					for (int att_index = 0; att_index < num_att_index; att_index ++) {
-						global_png_vector[att_index][current_frame_id - 1].release();;
-					}
-					downloaded_array[current_frame_id - 1] = 0;
-				}
+			if (current_frame_id == sequences_length) {
+				std::cout << "[onUpdate] Playback reached end. Looping back to 0." << std::endl;
+				next_frame_id = 0;
+
+			} else if (ready_array[current_frame_id + 1] == 1) { // 2. Not at end, check next frame
+				next_frame_id = current_frame_id + 1;
+				std::cout << "[onUpdate] Advancing from " << current_frame_id << " to " << current_frame_id + 1 << std::endl;
+			} else {
+				std::cout << "[onUpdate] Waiting for frame after " << current_frame_id << " to become ready..." << std::endl;
+				std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Shorter sleep
+			}
+
+			// 4. If we have a valid next frame, apply the change
+			if (next_frame_id != -1)
+			{
 				
+				int frame_to_free = next_frame_id - 1;
+				if(frame_to_free >= 0) {
+					ready_array[frame_to_free] = 0;
+				}
+
+				// Update frame_id
+				{ 
+					std::lock_guard<std::mutex> lock(mtx_frame_id);
+					frame_id = next_frame_id;
+					current_frame_id = frame_id; // Update local copy
+				}
+				lastUpdateTimestamp = now;
+				
+
 				// Download frame in buffer
-				if ((current_frame_id-1) % num_frames == 0 && current_frame_id / num_frames + download_cache_size < group_frame_index.size()) {
-					std::cout << "[onUpdate] Requesting group " << current_frame_id / num_frames + download_cache_size << " to be downloaded." << std::endl;
-					need_download_q.push(current_frame_id / num_frames + download_cache_size);
-					cv_download.notify_one();
+				if ((current_frame_id-1) % num_frames == 0) { 
+					int total_groups = group_frame_index.size();
+					if (total_groups > 0) { 
+						int next_group_to_download_logical_index = (current_frame_id / num_frames) + download_cache_size;
+						int group_to_download_actual_index = next_group_to_download_logical_index % total_groups;
+						
+						std::cout << "[onUpdate] Requesting group " << group_to_download_actual_index << " to be downloaded." << std::endl;
+						need_download_q.push(group_to_download_actual_index);
+						cv_download.notify_one();
+					}
 				}
 
 				// Ready frame in buffer
-				if (current_frame_id + ready_cache_size -1  < sequences_length) {
-					std::cout << "[onUpdate] Requesting frame " << current_frame_id + ready_cache_size -1 << " to be readied." << std::endl;
-					need_ready_q.push(current_frame_id + ready_cache_size - 1);
-					cv_ready.notify_one();
-				}
-				
-			} else {
-				std::cout << "[onUpdate] Waiting for frame after " << current_frame_id << " to become ready..." << std::endl;
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-			}
-
-			if (current_frame_id >= sequences_length - 1) {
-				std::cout << "[onUpdate] Playback reached end." << std::endl;
-				_multi_view_play.store(false);
+				int total_frames = sequences_length + 1;
+				int frame_to_ready = (current_frame_id + ready_cache_size - 1) % total_frames;
+				std::cout << "[onUpdate] Requesting frame " << frame_to_ready << " to be readied." << std::endl;
+				need_ready_q.push(frame_to_ready);
+				cv_ready.notify_one();
 			}
 		}
 	}
 
 
-	// After any potential frame_id change, update the active pointers for rendering.
 	if (current_frame_id < sequences_length) {
 		if (ready_array[current_frame_id] == 1) {
             int slot = current_frame_id % GPU_RING_BUFFER_SLOTS;
@@ -1181,16 +1187,9 @@ void sibr::GaussianView::onUpdate(Input & input)
                 // Set render pointers (they already point to combined buffers, just set count)
                 count = background_count + dynamic_count;
 
-            } else {
-                count = 0;
-            }
-		} else {
-			count = 0; // Frame not loaded yet
+            } 
 		}
-	} else {
-		count = 0;
-	}
-
+	} 
 }
 
 void sibr::GaussianView::onGUI()
@@ -1225,13 +1224,39 @@ void sibr::GaussianView::onGUI()
 			_multi_view_play.store(temp_play);
 			std::cout << "[GUI] Playback toggled to: " << (temp_play ? "ON" : "OFF") << std::endl;
 		}
-		if (ImGui::SliderInt("Playing Frame", &frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
+
+		int temp_frame_id = 0;
+		{
+			// Lock to safely read the current frame_id for the slider
+			std::lock_guard<std::mutex> lock(mtx_frame_id);
+			temp_frame_id = frame_id;
+		}
+		
+		// Use the temporary variable for the slider
+		if (ImGui::SliderInt("Playing Frame", &temp_frame_id, 0, (sequences_length - frame_st) / frame_step - 1)) {
+			// If the slider was moved, lock and update the real frame_id
+			{
+				std::lock_guard<std::mutex> lock(mtx_frame_id);
+				frame_id = temp_frame_id;
+			}
+
+
 			_multi_view_play = false; 
 			need_download_q = std::queue<int>(); 
 			need_ready_q = std::queue<int>(); 
 			std::cout << "frame_id changed to " << frame_id << std::endl;
-			ready_frames = frame_id + ready_cache_size - 1;
-			downloaded_frames = frame_id;
+			
+			int group_index = 0;
+			if (num_frames > 0) { // Avoid division by zero if num_frames isn't set
+				group_index = frame_id / num_frames;
+			}
+			if (group_index < group_frame_index.size()) {
+				downloaded_frames = group_frame_index[group_index].second;
+			} else {
+				downloaded_frames = frame_id; // Fallback
+			}
+			ready_frames = frame_id; 
+			
 			for (int i = 0; i < sequences_length; i++) {
 			
 				if (downloaded_array[i] == 1) {
@@ -1251,7 +1276,7 @@ void sibr::GaussianView::onGUI()
 
 			}
 			
-			int group_index = frame_id / num_frames;
+			group_index = frame_id / num_frames;
 			int download_start_index = group_frame_index[group_index].first;
 			int download_end_index = group_frame_index[group_index].second;
 
@@ -1283,9 +1308,16 @@ void sibr::GaussianView::onGUI()
 			cv_download.notify_one();
 		}		
 			
-		ImGui::SliderInt("Download Frame", &downloaded_frames, 0, sequences_length);
-		ImGui::SliderInt("Ready Frame", &ready_frames, 0, sequences_length);
-		// ImGui::ProgressBar(float(downloaded_frames) / float(sequences_length), ImVec2(0.0f, 0.0f), "Download Frame");
+		float download_progress = sequences_length > 0 ? (float)downloaded_frames / (float)sequences_length : 0.0f;
+		ImGui::ProgressBar(download_progress, ImVec2(-1.0f, 0.0f));
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::Text("Download Frame (%d / %d)", downloaded_frames, sequences_length);
+
+		float ready_progress = sequences_length > 0 ? (float)ready_frames / (float)sequences_length : 0.0f;
+		ImGui::ProgressBar(ready_progress, ImVec2(-1.0f, 0.0f));
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::Text("Ready Frame (%d / %d)", ready_frames, sequences_length);
+
 	ImGui::End();
 
 	if (ImGui::Combo("Remote Video list", &current_video_item, video_path.data(), video_path.size())) {
@@ -1597,6 +1629,7 @@ sibr::GaussianView::~GaussianView()
 		}
 	}
 }
+
 
 
 

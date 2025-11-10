@@ -202,8 +202,12 @@ namespace sibr {
 		std::vector<float> net_speed_buffer;
 		std::string folder;
 
-		int current_video_item = 2;
+		int current_video_item = 0;
 	std::vector<const char*> video_path = {
+			"http://127.0.0.1/atc_hs_3519e1f7-d/",
+			"http://127.0.0.1/atc_hs_d6c475a8-b/",
+			"http://127.0.0.1/atc_hs_f2db129b-3/",
+			"http://127.0.0.1/atc_hs_rf/",
 			"http://127.0.0.1/atc_hs/",
 			"http://127.0.0.1/dynamic_gs_basketball/",
 			"http://127.0.0.1/atc_1_q0_nobg_full/",
@@ -221,9 +225,17 @@ namespace sibr {
 			0,
 			0,
 			0,
+			0,
+			0,
+			0,
+			0,
 		};
 
 		std:: vector<const char*> bg_paths = {
+			"/home/riu/Desktop/point_cloud_bg7.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
 			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
 			"",
 			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
@@ -233,6 +245,9 @@ namespace sibr {
 		};
 
 		std:: vector<float> bg_scales = {
+			100.0f,
+			100.0f,
+			100.0f,
 			1.0f,
 			1.0f,
 			100.0f,
