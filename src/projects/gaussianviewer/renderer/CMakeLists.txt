@@ -11,9 +11,13 @@ set(SIBR_PROJECT "gaussian")
 # Add CUDA to the languages
 project(sibr_${SIBR_PROJECT} LANGUAGES CXX CUDA)
 
+
+#	GIT_REPOSITORY 	"https://github.com/r4dl/StopThePop-Rasterization.git"
+#    GIT_TAG			"main"
+
 sibr_gitlibrary(TARGET CudaRasterizer
     GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
-    GIT_TAG			"573e428645a98d74fb0d533bdbc6f174f3490e52"
+    GIT_TAG			"9c5c2028f6fbee2be239bc4c9421ff894fe4fbe0"
 )
 
 find_package(CUDAToolkit REQUIRED)

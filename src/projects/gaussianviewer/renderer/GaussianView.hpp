@@ -46,9 +46,9 @@
 
 #define SEQUENCE_LENGTH 1000
 
-#define MAX_GAUSSIANS_PER_FRAME 1500000 
+#define MAX_GAUSSIANS_PER_FRAME 1300000 
 
-#define GPU_RING_BUFFER_SLOTS 15
+#define GPU_RING_BUFFER_SLOTS 10
 
 namespace CudaRasterizer
 {
@@ -147,7 +147,7 @@ namespace sibr {
 		int num_att_index = 29;
 		int sequences_length = 0;
 
-		int ready_cache_size = 15;
+		int ready_cache_size = 10;
 
 		// Fix load larger than size
 		int download_cache_size = 10;
@@ -202,57 +202,34 @@ namespace sibr {
 		std::vector<float> net_speed_buffer;
 		std::string folder;
 
-		int current_video_item = 0;
-	std::vector<const char*> video_path = {
+		int current_video_item = 1;
+		std::vector<const char*> video_path = {
 			"http://127.0.0.1/atc_hs_3519e1f7-d/",
-			"http://127.0.0.1/atc_hs_d6c475a8-b/",
-			"http://127.0.0.1/atc_hs_f2db129b-3/",
-			"http://127.0.0.1/atc_hs_rf/",
-			"http://127.0.0.1/atc_hs/",
-			"http://127.0.0.1/dynamic_gs_basketball/",
 			"http://127.0.0.1/atc_1_q0_nobg_full/",
-			"http://127.0.0.1/atc_1_q0_nobg/",
-			// "http://127.0.0.1/png_all_0/",
-			// "http://127.0.0.1/png_all_0/",
-			"http://127.0.0.1/png_all_25/",
-			"http://127.0.0.1/png_all_50/",
 
 		};
 		std::vector<int> video_sh = {
 			0,
 			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
-			0,
 		};
 
 		std:: vector<const char*> bg_paths = {
-			"/home/riu/Desktop/point_cloud_bg7.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
 			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
 			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"",
-			"",
 		};
 
 		std:: vector<float> bg_scales = {
-			100.0f,
-			100.0f,
-			100.0f,
-			1.0f,
-			1.0f,
+			// 1.0f,
+			// 1.0f,
 			100.0f,
 			100.0f,	
-			1.0f,	
+		};
+
+		std:: vector<bool> anti_aliasings = {
+			false,
+			true,
 		};
 
 		std::chrono::milliseconds frameDuration; // 33ms per frame -> 30fps for dynamic play

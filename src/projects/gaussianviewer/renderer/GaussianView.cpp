@@ -629,7 +629,8 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&cam_pos_cuda, 3 * sizeof(float)));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_cuda, 3 * sizeof(float)));
 
-	float bg[3] = { white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f };
+	// float bg[3] = { white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f };
+	float bg[3] = { 0.f, 0.f, 0.f };
 	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(background_cuda, bg, 3 * sizeof(float), cudaMemcpyHostToDevice));
 	
 	std::cout << "Waiting for frame 0 to be ready..." << std::endl;
@@ -989,6 +990,7 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 		// Clear any previous CUDA errors.
 		cudaGetLastError(); 
 		// std::cout << "Rendering resolution: " << _resolution.x() << "x" << _resolution.y() << "x" << std::endl;
+		bool anti_alias = anti_aliasings[current_video_item];
 
 		CudaRasterizer::Rasterizer::forward(
 			geomBufferFunc,
@@ -1013,7 +1015,9 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			false,
 			image_cuda,
 			nullptr,
-			rects
+			anti_alias,
+			nullptr,
+			false
 		);
 	cudaError_t err = cudaPeekAtLastError();
 	if (err == cudaErrorInvalidConfiguration) 

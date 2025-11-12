@@ -103,7 +103,7 @@ namespace sibr
         if (m_openxrHmd->input()) {
             // Move camera with left stick
             m_openxrHmd->input()->setStickMoveCallback(OpenXRInput::Hand::LEFT, [this](float x, float y) {
-                float step = 0.1f;
+                float step = 0.5f;
                 if (abs(x) > 0.5f) {
                     m_vrConfig->camera().translate((m_vrConfig->camera().rotation() * m_headCameraInVrWorld.right()) * x * step * m_controlSensitivity_t);
                 }
