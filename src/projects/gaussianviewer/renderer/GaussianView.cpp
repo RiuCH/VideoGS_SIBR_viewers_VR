@@ -802,7 +802,14 @@ void sibr::GaussianView::download_func() {
 	while (frame_changed == false) {
 		{
 			std::unique_lock<std::mutex> lock(mtx_download);
-			cv_download.wait(lock, [this] { return !need_download_q.empty(); });
+			cv_download.wait(lock, [this] { return !need_download_q.empty()|| frame_changed; });
+			if (frame_changed) { //Check flag and exit loop if woken up to stop
+				break;
+			}
+
+			if (need_download_q.empty()) { 
+				continue;
+			}
 			group_index = need_download_q.front();
 			// if (i > frame_id + download_cache_size) {
 			// 	continue;
@@ -1014,10 +1021,11 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			tan_fovy,
 			false,
 			image_cuda,
-			nullptr,
 			anti_alias,
 			nullptr,
-			false
+			rects,
+			nullptr,
+			nullptr
 		);
 	cudaError_t err = cudaPeekAtLastError();
 	if (err == cudaErrorInvalidConfiguration) 
@@ -1335,8 +1343,17 @@ void sibr::GaussianView::onGUI()
 		}
 		frame_changed = true;
 		_multi_view_play.store(false);
-		download_thread_.join();
-		ready_thread_.join();
+		cv_download.notify_all();
+		cv_ready.notify_all();
+
+		std::cout << "Waiting for download thread to join..." << std::endl;
+		if (download_thread_.joinable()) {
+			download_thread_.join();
+		}
+		std::cout << "Waiting for ready thread to join..." << std::endl;
+		if (ready_thread_.joinable()) {
+			ready_thread_.join();
+		}
 		std::cout << "detect video changed, reset download thread and ready thread" << std::endl;
 		
 		// downloaded and ready frames need to be cleaned

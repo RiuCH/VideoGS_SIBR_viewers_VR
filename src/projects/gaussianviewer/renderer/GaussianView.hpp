@@ -46,7 +46,7 @@
 
 #define SEQUENCE_LENGTH 1000
 
-#define MAX_GAUSSIANS_PER_FRAME 1300000 
+#define MAX_GAUSSIANS_PER_FRAME 1400000 
 
 #define GPU_RING_BUFFER_SLOTS 10
 
@@ -202,33 +202,71 @@ namespace sibr {
 		std::vector<float> net_speed_buffer;
 		std::string folder;
 
-		int current_video_item = 1;
+		int current_video_item = 0;
 		std::vector<const char*> video_path = {
 			"http://127.0.0.1/atc_hs_3519e1f7-d/",
 			"http://127.0.0.1/atc_1_q0_nobg_full/",
+			"http://127.0.0.1/atc2_hs/",
+			"http://127.0.0.1/atc3_hs/",
+			"http://127.0.0.1/def1_hs/",
+			"http://127.0.0.1/def2_hs/",
+
 
 		};
 		std::vector<int> video_sh = {
 			0,
 			0,
+			0,
+			0,
+			0,
+			0,
+
 		};
 
 		std:: vector<const char*> bg_paths = {
 			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
 			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+
+
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+
 		};
 
 		std:: vector<float> bg_scales = {
-			// 1.0f,
-			// 1.0f,
-			100.0f,
-			100.0f,	
+			// 100.0f,
+			// 100.0f,
+			1.0f,
+			1.0f,
+			1.0f,
+			1.0f,
+			1.0f,
+			1.0f,
+
+			// 100.0f,
+			// 100.0f,	
 		};
 
 		std:: vector<bool> anti_aliasings = {
-			false,
+			true,
+			true,
+			true,
+			true,
+			true,
 			true,
 		};
 
