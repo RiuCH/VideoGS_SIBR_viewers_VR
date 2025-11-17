@@ -1,6 +1,6 @@
 # Streaming Volumetric Video SIBR Viewer for VR applciation
 
-<img src="assets/viewer.gif" width="1024">
+<img src="assets/viewer.gif" width="640">
 
 ## Installation
 
