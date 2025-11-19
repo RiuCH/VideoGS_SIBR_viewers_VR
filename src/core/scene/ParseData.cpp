@@ -242,8 +242,8 @@ namespace sibr {
 
 	void ParseData::getParsedBlenderData(const std::string& dataset_path)
 	{
-		_camInfos = InputCamera::loadTransform(dataset_path + "/transforms.json", 800, 800, "png", 0.01f, 1000.0f);
-		auto testInfos = InputCamera::loadTransform(dataset_path + "/transforms.json", 800, 800, "png", 0.01f, 1000.0f, _camInfos.size());
+		_camInfos = InputCamera::loadTransform(dataset_path + "/transforms_test.json", 800, 800, "png", 0.01f, 1000.0f);
+		auto testInfos = InputCamera::loadTransform(dataset_path + "/transforms_train.json", 800, 800, "png", 0.01f, 1000.0f, _camInfos.size());
 		_camInfos.insert(_camInfos.end(), testInfos.begin(), testInfos.end());
 
 		_basePathName = dataset_path;
@@ -388,9 +388,9 @@ namespace sibr {
 
 	void ParseData::getParsedColmapData(const std::string & dataset_path, const int fovXfovY_flag, const bool capreal_flag)
 	{
-		_basePathName = dataset_path ;
+		_basePathName = dataset_path + "/colmap/stereo";
 
-		_camInfos = sibr::InputCamera::loadColmap(_basePathName + "/sparse/0/", 0.01f, 1000.0f, fovXfovY_flag);
+		_camInfos = sibr::InputCamera::loadColmap(_basePathName + "/sparse", 0.01f, 1000.0f, fovXfovY_flag);
 
 		if (_camInfos.empty()) {
 			SIBR_ERR << "Colmap camera calibration file does not exist at /" + _basePathName + "/sparse/." << std::endl;
@@ -459,7 +459,7 @@ namespace sibr {
 		boost::algorithm::to_lower(datasetTypeStr);
 
 		std::string bundler = myArgs.dataset_path.get() + customPath + "/cameras/bundle.out";
-		std::string colmap = myArgs.dataset_path.get() + "/sparse/0/images.txt";
+		std::string colmap = myArgs.dataset_path.get() + "/colmap/stereo/sparse/images.txt";
 		std::string colmap_2 = myArgs.dataset_path.get() + "/sparse/0/images.bin";
 		std::string caprealobj = myArgs.dataset_path.get() + "/capreal/mesh.obj";
 		std::string caprealply = myArgs.dataset_path.get() + "/capreal/mesh.ply";
@@ -467,7 +467,7 @@ namespace sibr {
 		std::string meshroom = myArgs.dataset_path.get() + "/../../StructureFromMotion/";
 		std::string meshroom_sibr = myArgs.dataset_path.get() + "/StructureFromMotion/";
 		std::string chunked = myArgs.dataset_path.get() + "/chunk.dat";
-		std::string blender = myArgs.dataset_path.get() + "/transforms.json";
+		std::string blender = myArgs.dataset_path.get() + "/transforms_train.json";
 		std::string gaussian = myArgs.dataset_path.get() + "/cameras.json";
 
 		if(datasetTypeStr == "sibr") {
@@ -534,11 +534,9 @@ namespace sibr {
 				_datasetType = Type::GAUSSIAN;
 			}
 			else if (sibr::fileExists(colmap) && (sibr::fileExists(caprealobj) || sibr::fileExists(caprealply))) {
-
 				_datasetType = Type::COLMAP_CAPREAL;
 			}
 			else if (sibr::fileExists(colmap)) {
-
 				_datasetType = Type::COLMAP;
 			}
 			else if (sibr::fileExists(nvmscene)) {

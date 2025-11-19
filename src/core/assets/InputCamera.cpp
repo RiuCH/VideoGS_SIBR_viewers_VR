@@ -1530,14 +1530,12 @@ namespace sibr
 			json_file.setstate(std::ios::failbit);
 		}
 
-		// float fovx = v.get("camera_angle_x").get<double>();
-		float fovx = 0.5;
+		float fovx = v.get("camera_angle_x").get<double>();
 		picojson::array& frames = v.get("frames").get<picojson::array>();
 
 		for (int i = 0; i < frames.size(); i++)
 		{
-			// std::string imgname = frames[i].get("file_path").get<std::string>() + "." + extension;
-			std::string imgname = frames[i].get("file_path").get<std::string>();
+			std::string imgname = frames[i].get("file_path").get<std::string>() + "." + extension;
 
 			auto mat = frames[i].get("transform_matrix").get<picojson::array>();
 

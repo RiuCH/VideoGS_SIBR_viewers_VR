@@ -26,8 +26,7 @@
 namespace sibr {
 
 	InteractiveCameraHandler::InteractiveCameraHandler(const bool supportRecording) : _trackball(true) {
-		// _currentMode = FPS;
-		_currentMode = TRACKBALL;
+		_currentMode = FPS;
 		_shouldSmooth = IBRVIEW_USESMOOTHCAM;
 		_startCam = 0;
 		_interpFactor = 0;
@@ -320,6 +319,10 @@ namespace sibr {
 		if (_startCam >= _interpPath.size() - 1) {
 			_interpFactor = 0;
 			_startCam = 0;
+			
+			std::cout << "FIN" << std::endl;
+			if (num_interps >= MAX_NUM_INTERPS) { exit(1); }
+			num_interps++;
 		}
 
 		float k = std::min(std::max(((_interpFactor) / (float)SIBR_INTERPOLATE_FRAMES), 1e-6f), 1.0f - 1e-6f);
@@ -502,15 +505,49 @@ namespace sibr {
 		}
 
 		// Note this call has three modes: record (only read the arg camera) | playback (overwrite the arg camera) | do nothing (do nothing)
-		_cameraRecorder.use(_currentCamera);
+		_cameraRecorder.use(_finalCamera);
 
 		_previousCamera = _currentCamera;
 		_clippingPlanes[0] = _currentCamera.znear();
 		_clippingPlanes[1] = _currentCamera.zfar();
 	}
 
+	void InteractiveCameraHandler::updateCamera(const IRenderingMode::Ptr & renderingMode) {
+		renderingMode->preparePosePrediction();
+		
+		if (_cameraRecorder.isPlaying()) {
+			return;
+		}
+
+		auto savePath = _finalCamera.savePath();
+		auto debugVideoFrames = _finalCamera.needVideoSave();
+		
+		_finalCamera = _currentCamera;
+		auto leftTransform = _currentCamera.transform();
+		auto rightTransform = _currentCamera.transform();
+
+		// Calculate left eye camera.
+		auto q = renderingMode->getRotation(0);
+		auto pos = renderingMode->getPosition(0);
+		leftTransform.rotation(_currentCamera.rotation() * q);
+		leftTransform.position(_currentCamera.position());
+		leftTransform.translate(pos, _currentCamera.transform());
+		_finalCamera.transform(leftTransform);
+
+		// Calculate right eye camera.
+		q = renderingMode->getRotation(1);
+		pos = renderingMode->getPosition(1);
+		rightTransform.rotation(_currentCamera.rotation() * q);
+		rightTransform.position(_currentCamera.position());
+		rightTransform.translate(pos, _currentCamera.transform());
+		_finalCamera.setRightTransform(rightTransform);
+
+		_finalCamera.setSavePath(savePath);
+		_finalCamera.setDebugVideo(debugVideoFrames);
+	}
+
 	const sibr::InputCamera& InteractiveCameraHandler::getCamera(void) const {
-		return _currentCamera;
+		return _finalCamera;
 	}
 
 	void InteractiveCameraHandler::onRender(const sibr::Viewport& viewport) {

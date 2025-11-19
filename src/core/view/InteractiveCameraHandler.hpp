@@ -204,6 +204,11 @@ namespace sibr {
 		/** \return radius used for trackball*/
 		float & getRadius() { return _radius; }
 
+		/** Update camera with renderingMode.
+		 * \param renderingMode the rendering mode
+		 */
+		virtual void updateCamera(const IRenderingMode::Ptr & renderingMode) override;
+
 	private:
 
 		int _currentCamId; ///< Current snapped camera ID.
@@ -225,6 +230,8 @@ namespace sibr {
 		sibr::InputCamera _previousCamera; ///< Previous camera (for interpolation).
 		sibr::InputCamera _currentCamera; ///< Current camera.
 
+		sibr::InputCamera _finalCamera;   ///< Camera with head movement.
+
 		/// Parameters for path interpolation.
 		uint _startCam; ///< Start camera index in the list.
 		uint _interpFactor; ///< Current interpolation factor between cam _startCam and _startCam+1.
@@ -241,6 +248,9 @@ namespace sibr {
 		bool _isSetup; ///< Is the handler setup.
 		float _cameraFovDeg = 0.0f; ///< Camera field of view in degrees (for GUI).
 		bool _fribrExport = false; ///< Switch to FRIBR compatible export mode for paths.
+		
+		int num_interps = 0;
+		const int MAX_NUM_INTERPS = 4;
 
 		/** Interpolate along the path. */
 		void interpolate();

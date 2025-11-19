@@ -72,6 +72,13 @@ namespace sibr
 		/** \return the right eye (or common) RT. */
 		virtual const std::unique_ptr<RenderTargetRGB>&	rRT() = 0;
 
+		/** Prepare pose prediction */
+		virtual void preparePosePrediction() {}
+		/** \return the head rotation. */
+		virtual Eigen::Quaternionf getRotation(int idx) { return Eigen::Quaternionf::Identity(); }
+		/** \return the head position. */
+		virtual Eigen::Vector3f getPosition(int idx) { return Eigen::Vector3f::Zero(); }
+
 	};
 
 	/** Default rendering mode: monoview, passthrough.
