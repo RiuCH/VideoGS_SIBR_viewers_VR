@@ -69,6 +69,7 @@ __global__ void dequantize_and_reorganize_kernel(
     int ply_dim,
     int shs_dim,
     int shs_dim_allocated,
+    float scale_factor,
     const uint8_t* d_raw_images,
     const float* d_minmax_values,
     float* d_pos_out,     // float3
@@ -85,12 +86,11 @@ __global__ void dequantize_and_reorganize_kernel(
 
     // 1. Process Position (16-bit)
     // attr_index 0
-    d_pos_out[idx * 3 + 0] = read_16bit_val(idx, 0, image_pixels, d_raw_images, d_minmax_values); 
+    d_pos_out[idx * 3 + 0] = read_16bit_val(idx, 0, image_pixels, d_raw_images, d_minmax_values) * scale_factor; 
     // attr_index 1
-    d_pos_out[idx * 3 + 1] = read_16bit_val(idx, 1, image_pixels, d_raw_images, d_minmax_values); 
+    d_pos_out[idx * 3 + 1] = read_16bit_val(idx, 1, image_pixels, d_raw_images, d_minmax_values) * scale_factor; 
     // attr_index 2
-    d_pos_out[idx * 3 + 2] = read_16bit_val(idx, 2, image_pixels, d_raw_images, d_minmax_values); 
-
+    d_pos_out[idx * 3 + 2] = read_16bit_val(idx, 2, image_pixels, d_raw_images, d_minmax_values) * scale_factor; 
     // 2. Process SHs (8-bit)
     // Attributes start at 3 (fdc) and include all frest.
     int shs_base_attr = 6;
@@ -112,9 +112,9 @@ __global__ void dequantize_and_reorganize_kernel(
     // 4. Process Scale (8-bit)
     //    Based on original C++: gaussian_data[ply_dim - 10] -> att_index = (ply_dim - 10) + 3 = ply_dim - 7
     int scale_base_attr = ply_dim - 7;
-    d_scale_out[idx * 3 + 0] = read_8bit_val(idx, scale_base_attr + 0, image_pixels, d_raw_images, d_minmax_values);
-    d_scale_out[idx * 3 + 1] = read_8bit_val(idx, scale_base_attr + 1, image_pixels, d_raw_images, d_minmax_values);
-    d_scale_out[idx * 3 + 2] = read_8bit_val(idx, scale_base_attr + 2, image_pixels, d_raw_images, d_minmax_values);
+    d_scale_out[idx * 3 + 0] = read_8bit_val(idx, scale_base_attr + 0, image_pixels, d_raw_images, d_minmax_values) * scale_factor;
+    d_scale_out[idx * 3 + 1] = read_8bit_val(idx, scale_base_attr + 1, image_pixels, d_raw_images, d_minmax_values) * scale_factor;
+    d_scale_out[idx * 3 + 2] = read_8bit_val(idx, scale_base_attr + 2, image_pixels, d_raw_images, d_minmax_values) * scale_factor;
     
     // 5. Process Rotation (8-bit)
     //    Based on original C++: gaussian_data[ply_dim - 7] -> att_index = (ply_dim - 7) + 3 = ply_dim - 4
@@ -136,6 +136,7 @@ extern "C" void launch_dequantize_kernel(
     int ply_dim,
     int shs_dim,
     int shs_dim_allocated,
+    float scale_factor,
     const uint8_t* d_raw_images,
     const float* d_minmax_values,
     float* d_pos_out,
@@ -150,6 +151,7 @@ extern "C" void launch_dequantize_kernel(
         ply_dim,
         shs_dim,
         shs_dim_allocated,
+        scale_factor,
         d_raw_images,
         d_minmax_values,
         d_pos_out,

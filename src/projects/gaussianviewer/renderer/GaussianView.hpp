@@ -254,6 +254,10 @@ namespace sibr {
 
 		};
 
+		float dynamic_scale_factor = 0.01f;
+
+		bool _background_uploaded = false;
+
 		std:: vector<const char*> bg_paths = {
 
 			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
@@ -264,8 +268,8 @@ namespace sibr {
 			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
 
 			// "/home/riu/Desktop/point_cloud_2DGS.ply",
-			// "/home/riu/Desktop/point_cloud_VRsplat.ply",
-			"/home/riu/Desktop/VRSplat/pretrained_model/8d3728c8-0/point_cloud/iteration_30000/point_cloud.ply",
+			"/home/riu/Desktop/point_cloud_VRsplat_clean.ply",
+			// "/home/riu/Desktop/VRSplat/pretrained_model/8d3728c8-0/point_cloud/iteration_30000/point_cloud.ply",
 			// "/home/riu/Desktop/VRSplat/pretrained_model/truck/point_cloud/iteration_35000/point_cloud.ply",
 			// "/home/riu/Desktop/point_cloud_3DGS_depth.ply",
 			// "/home/riu/Desktop/point_cloud_25GS.ply",

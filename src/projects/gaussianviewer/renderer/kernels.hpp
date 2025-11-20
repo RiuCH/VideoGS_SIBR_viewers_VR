@@ -36,6 +36,7 @@ extern "C" {
  * @param d_scale_out     Device pointer to the output scale buffer (float3).
  * @param d_opacity_out   Device pointer to the output opacity buffer (float).
  * @param d_shs_out       Device pointer to the output SHs buffer (float*).
+ * @param scale_factor    Scaling factor applied to position and scale attributes.
  */
 void launch_dequantize_kernel(
     unsigned int blocks,
@@ -46,6 +47,7 @@ void launch_dequantize_kernel(
     int ply_dim,
     int shs_dim,
     int shs_dim_allocated,
+    float scale_factor,
     const uint8_t* d_raw_images,
     const float* d_minmax_values,
     float* d_pos_out,

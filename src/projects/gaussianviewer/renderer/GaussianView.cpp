@@ -189,6 +189,7 @@ void sibr::GaussianView::loadVideo_func(int frame_index)
         ply_dim,
         shs_dim,
 		shs_dim_allocated,
+		dynamic_scale_factor,
         current_slot.raw_attributes_cuda,
         current_slot.minmax_values_cuda,
         current_slot.pos_cuda,
@@ -1238,73 +1239,80 @@ void sibr::GaussianView::onUpdate(Input & input)
 		}
 	}
 
-
 	if (current_frame_id < sequences_length) {
+
 		if (ready_array[current_frame_id] == 1 && current_frame_id != last_loaded_frame_id) {
-            int slot = current_frame_id % GPU_RING_BUFFER_SLOTS;
+			int slot = current_frame_id % GPU_RING_BUFFER_SLOTS;
 
-            // This is the critical wait. If the frame isn't ready,
-            // the render thread will pause here until the data is on the GPU.
-            CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[slot]));
+			// Wait for GPU slot
+			CUDA_SAFE_CALL_ALWAYS(cudaEventSynchronize(data_events[slot]));
 
-            int dynamic_count = P_array[current_frame_id];
+			int dynamic_count = P_array[current_frame_id];
 
-            if (dynamic_count > 0 || background_count > 0) {
-                GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
-                
-                // Destination pointers for combined buffers
-                float* d_pos_dst = combined_pos_cuda;
-                float* d_rot_dst = combined_rot_cuda;
-                float* d_scale_dst = combined_scale_cuda;
-                float* d_opacity_dst = combined_opacity_cuda;
-                float* d_shs_dst = combined_shs_cuda;
-                int* d_rect_dst = combined_rect_cuda;
+			if (dynamic_count > 0 || background_count > 0) {
+				GpuFrameSlot& current_slot = gpu_ring_buffer[slot];
+				
+				// Destination pointers for combined buffers
+				float* d_pos_dst = combined_pos_cuda;
+				float* d_rot_dst = combined_rot_cuda;
+				float* d_scale_dst = combined_scale_cuda;
+				float* d_opacity_dst = combined_opacity_cuda;
+				float* d_shs_dst = combined_shs_cuda;
+				int* d_rect_dst = combined_rect_cuda;
 
-                const int shs_size_allocated = sizeof(SHs<3>);
-                size_t shs_floats_per_gaussian = shs_size_allocated / sizeof(float);
+				const int shs_size_allocated = sizeof(SHs<3>);
+				size_t shs_floats_per_gaussian = shs_size_allocated / sizeof(float);
 
-                // 1. Copy background (if it exists)
-                if (background_count > 0) {
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, background_pos_cuda, sizeof(Pos) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    d_pos_dst += background_count * 3; // 3 floats per Pos
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, background_rot_cuda, sizeof(Rot) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    d_rot_dst += background_count * 4; // 4 floats per Rot
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, background_scale_cuda, sizeof(Scale) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    d_scale_dst += background_count * 3; // 3 floats per Scale
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, background_opacity_cuda, sizeof(float) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    d_opacity_dst += background_count;
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, background_shs_cuda, shs_size_allocated * background_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    d_shs_dst += background_count * shs_floats_per_gaussian;
-                    if (_fastCulling) {
-                        // Clear rects for static background
-                        CUDA_SAFE_CALL(cudaMemsetAsync(d_rect_dst, 0, 2 * sizeof(int) * background_count, combine_stream));
-                        d_rect_dst += background_count * 2;
-                    }
-                }
+				// 1. Copy background (Only Once)
+				if (background_count > 0) {
+					// Only copy if we haven't done so yet
+					if (!_background_uploaded) {
+						CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, background_pos_cuda, sizeof(Pos) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+						CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, background_rot_cuda, sizeof(Rot) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+						CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, background_scale_cuda, sizeof(Scale) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+						CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, background_opacity_cuda, sizeof(float) * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+						CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, background_shs_cuda, shs_size_allocated * background_count, cudaMemcpyDeviceToDevice, combine_stream));
+						
+						if (_fastCulling) {
+							CUDA_SAFE_CALL(cudaMemsetAsync(d_rect_dst, 0, 2 * sizeof(int) * background_count, combine_stream));
+						}
+						
+						// Mark as uploaded so we skip this block next frame
+						_background_uploaded = true;
+					}
 
-                // 2. Copy dynamic frame data *after* background data
-                if (dynamic_count > 0) {
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, current_slot.pos_cuda, sizeof(Pos) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, current_slot.rot_cuda, sizeof(Rot) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, current_slot.scale_cuda, sizeof(Scale) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, current_slot.opacity_cuda, sizeof(float) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, current_slot.shs_cuda, shs_size_allocated * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    if (_fastCulling) {
-                        // Copy rects for dynamic part
-                        CUDA_SAFE_CALL(cudaMemcpyAsync(d_rect_dst, current_slot.rect_cuda, 2 * sizeof(int) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
-                    }
-                }
+					// so the dynamic data is written to the correct offset.
+					d_pos_dst += background_count * 3; 
+					d_rot_dst += background_count * 4; 
+					d_scale_dst += background_count * 3; 
+					d_opacity_dst += background_count;
+					d_shs_dst += background_count * shs_floats_per_gaussian;
+					// if (_fastCulling) {
+					// 	d_rect_dst += background_count * 2;
+					// }
+				}
 
-                // Set render pointers (they already point to combined buffers, just set count)
-				// count = background_count;
-                count = background_count + dynamic_count;
+				// 2. Copy dynamic frame data *after* background data
+				if (dynamic_count > 0) {
+					CUDA_SAFE_CALL(cudaMemcpyAsync(d_pos_dst, current_slot.pos_cuda, sizeof(Pos) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					CUDA_SAFE_CALL(cudaMemcpyAsync(d_rot_dst, current_slot.rot_cuda, sizeof(Rot) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					CUDA_SAFE_CALL(cudaMemcpyAsync(d_scale_dst, current_slot.scale_cuda, sizeof(Scale) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					CUDA_SAFE_CALL(cudaMemcpyAsync(d_opacity_dst, current_slot.opacity_cuda, sizeof(float) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					CUDA_SAFE_CALL(cudaMemcpyAsync(d_shs_dst, current_slot.shs_cuda, shs_size_allocated * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					// if (_fastCulling) {
+					// 	CUDA_SAFE_CALL(cudaMemcpyAsync(d_rect_dst, current_slot.rect_cuda, 2 * sizeof(int) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
+					// }
+				}
+
+				// Set render pointers
+				count = background_count + dynamic_count;
 
 				// Update tracker so we don't re-upload this frame
 				last_loaded_frame_id = current_frame_id;
 
 				// Record event when copies are done
-                CUDA_SAFE_CALL(cudaEventRecord(combine_event, combine_stream));
-            } 
+				CUDA_SAFE_CALL(cudaEventRecord(combine_event, combine_stream));
+			}
 		}
 	} 
 }
