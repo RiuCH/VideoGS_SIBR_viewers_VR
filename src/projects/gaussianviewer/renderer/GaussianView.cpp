@@ -30,14 +30,8 @@
 #include <fstream>
 #include <string>
 #include <sstream>
-// #include <curl/curl.h>
-// #include <imgui/imgui_impl_opengl3.h>
-// #include <imgui/imgui_impl_glfw.h>
-// #include <unistd.h>
-// Define the types and sizes that make up the contents of each Gaussian 
-// in the trained model.
-
-// #define _sh_degree 1
+#include <npp.h>
+#include <nppi.h>
 
 typedef sibr::Vector3f Pos;
 template<int D>
@@ -470,6 +464,9 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	_dontshow(messageRead),
 	sibr::ViewBase(render_w, render_h)
 {
+	// Initialize frame tracker
+	last_loaded_frame_id = -1;
+
 	int num_devices;
 	CUDA_SAFE_CALL_ALWAYS(cudaGetDeviceCount(&num_devices));
 	_device = device;
@@ -626,8 +623,18 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	std::cout << "Elapsed time: " << elapsed_seconds << " seconds" << std::endl;
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&view_cuda, sizeof(sibr::Matrix4f)));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&proj_cuda, sizeof(sibr::Matrix4f)));
+	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&proj_inv_cuda, sizeof(sibr::Matrix4f)));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&cam_pos_cuda, 3 * sizeof(float)));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&background_cuda, 3 * sizeof(float)));
+
+    // The previous allocation was (num_tiles / 8) bytes, which causes overflow if the rasterizer writes 
+    // a list of indices (4 bytes per tile).
+	int max_num_tiles = ((_resolution.x() + 15) / 16) * ((_resolution.y() + 15) / 16);
+	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&visibility_mask_cuda, (((_resolution.x() + 15) / 16) * ((_resolution.y() + 15) / 16) + 31) / 32 * 4));
+	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&visibility_mask_sum_cuda, ((_resolution.x() + 15) / 16 + 1) * ((_resolution.y() + 15) / 16 + 1) * 4));
+	
+	CUDA_SAFE_CALL_ALWAYS(cudaMalloc(&image_cuda_hier[0], (_resolution.x() / 2) * (_resolution.y() / 2) * 3 * sizeof(float)));
+	CUDA_SAFE_CALL_ALWAYS(cudaMalloc(&image_cuda_hier[1], (_resolution.x() / 2) * (_resolution.y() / 2) * 3 * sizeof(float)));
 
 	// float bg[3] = { white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f, white_bg ? 1.f : 0.f };
 	float bg[3] = { 0.f, 0.f, 0.f };
@@ -653,6 +660,61 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	geomBufferFunc = resizeFunctional(&geomPtr, allocdGeom);
 	binningBufferFunc = resizeFunctional(&binningPtr, allocdBinning);
 	imgBufferFunc = resizeFunctional(&imgPtr, allocdImg);
+
+	parseJSON();
+}
+
+void sibr::GaussianView::parseJSON()
+{
+	std::string json_path = _scene->data()->configPath();
+	std::ifstream json_file(json_path, std::ios::in);
+
+	splatting_settings = CudaRasterizer::SplattingSettings();
+
+	// return if no config file is found - use default parameters (Vanilla 3DGS)
+ 	if (json_file.fail()) return;
+	nlohmann::json js = nlohmann::json::parse(json_file);
+
+	// get settings from config
+	splatting_settings = js.get<CudaRasterizer::SplattingSettings>();
+
+	if (splatting_settings.foveated_rendering)
+		SIBR_LOG << "Using Foveated Rendering" << std::endl;
+	else
+		SIBR_LOG << "Not Using Foveated Rendering" << std::endl;
+
+	// sanity checks
+	if (CudaRasterizer::isInvalidSortMode(splatting_settings.sort_settings.sort_mode))
+	{
+		SIBR_LOG << "Invalid Sort Mode in " << json_path << " ("<< splatting_settings.sort_settings.sort_mode << "): continuing with default" << std::endl;
+		splatting_settings.sort_settings.sort_mode = CudaRasterizer::SortMode::GLOBAL;
+	}
+	if (CudaRasterizer::isInvalidSortOrder(splatting_settings.sort_settings.sort_order))
+	{
+		SIBR_LOG << "Invalid Sort Order in " << json_path << " ("<< splatting_settings.sort_settings.sort_order << "): continuing with default" << std::endl;
+		splatting_settings.sort_settings.sort_order = CudaRasterizer::GlobalSortOrder::VIEWSPACE_Z;
+	}
+	if (splatting_settings.sort_settings.hasModifiableWindowSize())
+	{
+		auto sort_mode = splatting_settings.sort_settings.sort_mode;
+		auto test_function = [&](std::vector<int> vec, const char* what, int default_value, int& variable)
+		{
+			if (std::find(vec.begin(), vec.end(), variable) == vec.end())
+			{
+				SIBR_LOG << "Invalid " << what << " Size in " << json_path << " ("<< variable << "): continuing with default" << std::endl;
+				variable = default_value;
+			}
+		};
+	if (sort_mode == CudaRasterizer::SortMode::HIERARCHICAL)
+		{
+			test_function(CudaRasterizer::per_pixel_queue_sizes_hier, "Per-Pixel Queue", 4, splatting_settings.sort_settings.queue_sizes.per_pixel);
+			test_function(CudaRasterizer::twobytwo_tile_queue_sizes, "2x2-Tile Queue", 8, splatting_settings.sort_settings.queue_sizes.tile_2x2);
+		}
+		if (sort_mode == CudaRasterizer::SortMode::PER_PIXEL_KBUFFER)
+		{
+			test_function(CudaRasterizer::per_pixel_queue_sizes, "Per-Pixel Queue", 1, splatting_settings.sort_settings.queue_sizes.per_pixel);
+		}
+	}
 }
 
 void sibr::GaussianView::setResolution(const Vector2i &size)
@@ -937,9 +999,7 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 
 	if (currMode == "Ellipsoids")
 	{
-		// stop ellipsoid rendering to avoid loading gData
-		return;
-		// _gaussianRenderer->process(count, *gData, eye, dst, 0.2f);
+		_gaussianRenderer->process(count, *gData, eye, dst, 0.2f);
 	}
 	else if (currMode == "Initial Points")
 	{
@@ -947,21 +1007,66 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 	}
 	else
 	{
-		// Convert view and projection to target coordinate system
-		auto view_mat = eye.view();
-		auto proj_mat = eye.viewproj();
-		view_mat.row(1) *= -1;
-		view_mat.row(2) *= -1;
-		proj_mat.row(1) *= -1;
 
-		// Compute additional view parameters
-		float tan_fovy = tan(eye.fovy() * 0.5f);
-		float tan_fovx = tan_fovy * eye.aspect();
 
-		// Copy frame-dependent data to GPU
-		CUDA_SAFE_CALL(cudaMemcpy(view_cuda, view_mat.data(), sizeof(sibr::Matrix4f), cudaMemcpyHostToDevice));
-		CUDA_SAFE_CALL(cudaMemcpy(proj_cuda, proj_mat.data(), sizeof(sibr::Matrix4f), cudaMemcpyHostToDevice));
-		CUDA_SAFE_CALL(cudaMemcpy(cam_pos_cuda, &eye.position(), sizeof(float) * 3, cudaMemcpyHostToDevice));
+		auto forward = [&](const sibr::Camera& eye, float* image_cuda_curr, int x, int y, bool mask = false) {
+			// Convert view and projection to target coordinate system
+			auto view_mat = eye.view();
+			auto proj_mat = eye.viewproj();
+			view_mat.row(1) *= -1;
+			view_mat.row(2) *= -1;
+			proj_mat.row(1) *= -1;
+
+			// Compute additional view parameters
+			float tan_fovy = tan(eye.fovy() * 0.5f);
+			float tan_fovx = tan_fovy * eye.aspect();
+
+			auto proj_inv_mat = sibr::Matrix4f(proj_mat.inverse());
+
+			// Copy frame-dependent data to GPU
+			CUDA_SAFE_CALL(cudaMemcpy(view_cuda, view_mat.data(), sizeof(sibr::Matrix4f), cudaMemcpyHostToDevice));
+			CUDA_SAFE_CALL(cudaMemcpy(proj_cuda, proj_mat.data(), sizeof(sibr::Matrix4f), cudaMemcpyHostToDevice));
+			CUDA_SAFE_CALL(cudaMemcpy(proj_inv_cuda, proj_inv_mat.data(), sizeof(sibr::Matrix4f), cudaMemcpyHostToDevice));
+			CUDA_SAFE_CALL(cudaMemcpy(cam_pos_cuda, &eye.position(), sizeof(float) * 3, cudaMemcpyHostToDevice));
+			if (mask)
+			{
+				// auto start = std::chrono::steady_clock::now();
+				CUDA_SAFE_CALL(cudaMemcpy(visibility_mask_cuda, eye.visibilityMask().first, (((_resolution.x() + 15) / 16) * ((_resolution.y() + 15) / 16) + 31) / 32 * 4, cudaMemcpyHostToDevice));
+				CUDA_SAFE_CALL(cudaMemcpy(visibility_mask_sum_cuda, eye.visibilityMask().second, ((_resolution.x() + 15) / 16 + 1) * ((_resolution.y() + 15) / 16 + 1) * 4, cudaMemcpyHostToDevice));
+			}
+
+			// Rasterize
+			CudaRasterizer::Rasterizer::forward(
+				geomBufferFunc,
+				binningBufferFunc,
+				imgBufferFunc,
+				count, _sh_degree, 16,
+				background_cuda,
+				x, y,
+				splatting_settings,
+				debugMode,
+				pos_cuda,
+				shs_cuda,
+				nullptr,
+				opacity_cuda,
+				scale_cuda,
+				_scalingModifier,
+				rot_cuda,
+				nullptr,
+				view_cuda,
+				proj_cuda,
+				proj_inv_cuda,
+				cam_pos_cuda,
+				tan_fovx,
+				tan_fovy,
+				false,
+				image_cuda_curr,
+				nullptr,
+				false,
+				mask ? visibility_mask_cuda : nullptr,
+				mask ? visibility_mask_sum_cuda : nullptr
+			);
+		};
 
 		float* image_cuda = nullptr;
 		if (!_interop_failed)
@@ -976,72 +1081,69 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			image_cuda = fallbackBufferCuda;
 		}
 
-		// Validate parameters before CUDA call
-		if (count <= 0 || _resolution.x() <= 0 || _resolution.y() <= 0) {
-			SIBR_ERR << "Invalid parameters: count=" << count 
-			         << ", resolution=" << _resolution.x() << "x" << _resolution.y() << std::endl;
-			return;
+		int w = _resolution.x();
+		int h = _resolution.y();
+
+		Camera eye2 = eye;
+		if (eye2.isSym()) {
+			float fovv = eye.fovy();
+			float fovh = fovv * eye2.aspect();
+			eye2.setAllFov({ -fovh / 2, fovh / 2, -fovv / 2, fovv / 2 });
 		}
-		
-		// Check for null required pointers
-		// Note: pos_cuda, shs_cuda etc. now point to combined buffers
-		if (!pos_cuda || !opacity_cuda || !scale_cuda || !rot_cuda || !view_cuda || 
-		    !proj_cuda || !cam_pos_cuda || !background_cuda || !image_cuda) {
-			SIBR_ERR << "Null pointer detected in CUDA parameters" << std::endl;
-			return;
+
+		// Low-res
+		forward(eye2, image_cuda_hier[0], w / 2, h / 2, !eye.isSym());
+
+		// High-res
+		auto fov = eye2.allFov();
+		// eye2.fovy(atan(tan((fov.w() - fov.z()) / 2) * 0.5f) * 2);
+		eye2.fovy(atan(tan(fov.w()) * 0.5f) - atan(tan(fov.z()) * 0.5f));
+		eye2.setAllFov({atan(tan(fov.x()) * 0.5f), atan(tan(fov.y()) * 0.5f), atan(tan(fov.z()) * 0.5f), atan(tan(fov.w()) * 0.5f)});
+		// fov = eye2.allFov();
+		forward(eye2, image_cuda_hier[1], w / 2, h / 2);
+
+
+		// Upsample
+		{
+			NppiSize srcSize = { w / 2, h / 2 };
+			const float* pSrc[] = {
+				image_cuda_hier[0],
+				image_cuda_hier[0] + srcSize.width * srcSize.height,
+				image_cuda_hier[0] + 2 * srcSize.width * srcSize.height
+			};
+			int srcStep = srcSize.width * sizeof(float);
+			NppiRect srcRect = { 0, 0, srcSize.width, srcSize.height };
+			NppiSize dstSize = { w, h };
+			float* pDst[] = {
+				image_cuda,
+				image_cuda + w * h,
+				image_cuda + 2 * w * h
+			};
+			int dstStep = w * sizeof(float);
+			NppiRect dstRect = { 0, 0, w / 2 * 2, h / 2 * 2 };
+			auto status = nppiResize_32f_P3R(
+				pSrc, srcStep, srcSize, srcRect,
+				pDst, dstStep, dstSize, dstRect,
+				NPPI_INTER_CUBIC
+				// NPPI_INTER_LANCZOS
+			);
+			if (status != NPP_SUCCESS)
+			{
+				SIBR_ERR << "NPP error: " << status << std::endl;
+			}
 		}
-		
-		// Rasterize
-		int* rects = _fastCulling ? rect_cuda : nullptr;
 
-		// Clear any previous CUDA errors.
-		cudaGetLastError(); 
-		// std::cout << "Rendering resolution: " << _resolution.x() << "x" << _resolution.y() << "x" << std::endl;
-		bool anti_alias = anti_aliasings[current_video_item];
-
-		CudaRasterizer::Rasterizer::forward(
-			geomBufferFunc,
-			binningBufferFunc,
-			imgBufferFunc,
-			count, _sh_degree, 16,
-			background_cuda,
-			_resolution.x(), _resolution.y(),
-			pos_cuda,
-			shs_cuda,
-			nullptr,
-			opacity_cuda,
-			scale_cuda,
-			_scalingModifier,
-			rot_cuda,
-			nullptr,
-			view_cuda,
-			proj_cuda,
-			cam_pos_cuda,
-			tan_fovx,
-			tan_fovy,
-			false,
-			image_cuda,
-			anti_alias,
-			nullptr,
-			rects,
-			nullptr,
-			nullptr
-		);
-	cudaError_t err = cudaPeekAtLastError();
-	if (err == cudaErrorInvalidConfiguration) 
-	{
-
-		cudaGetLastError(); 
-	} 
-	else if (err != cudaSuccess) 
-	{
-		SIBR_ERR << "CUDA error after Rasterizer::forward: " << cudaGetErrorString(err) << std::endl;
-	}
-		
-cudaDeviceSynchronize();
-		err = cudaPeekAtLastError();
-		if (err != cudaSuccess) {
-			SIBR_ERR << "CUDA error after Rasterizer::forward: " << cudaGetErrorString(err) << std::endl;
+		// Move high-res image
+		{
+			CudaRasterizer::blend(
+				image_cuda_hier[1],
+				w / 2, h / 2,
+				image_cuda,
+				w, h,
+				w / (tan(fov.y()) - tan(fov.x())) * tan(-fov.x()) / 2 + 0.5,
+				h / (tan(fov.w()) - tan(fov.z())) * tan(fov.w()) / 2 + 0.5,
+				0.1f
+			);
 		}
 
 		if (!_interop_failed)
@@ -1138,7 +1240,7 @@ void sibr::GaussianView::onUpdate(Input & input)
 
 
 	if (current_frame_id < sequences_length) {
-		if (ready_array[current_frame_id] == 1) {
+		if (ready_array[current_frame_id] == 1 && current_frame_id != last_loaded_frame_id) {
             int slot = current_frame_id % GPU_RING_BUFFER_SLOTS;
 
             // This is the critical wait. If the frame isn't ready,
@@ -1192,13 +1294,16 @@ void sibr::GaussianView::onUpdate(Input & input)
                         CUDA_SAFE_CALL(cudaMemcpyAsync(d_rect_dst, current_slot.rect_cuda, 2 * sizeof(int) * dynamic_count, cudaMemcpyDeviceToDevice, combine_stream));
                     }
                 }
-                
-                // Record event when copies are done
-                CUDA_SAFE_CALL(cudaEventRecord(combine_event, combine_stream));
 
                 // Set render pointers (they already point to combined buffers, just set count)
+				// count = background_count;
                 count = background_count + dynamic_count;
 
+				// Update tracker so we don't re-upload this frame
+				last_loaded_frame_id = current_frame_id;
+
+				// Record event when copies are done
+                CUDA_SAFE_CALL(cudaEventRecord(combine_event, combine_stream));
             } 
 		}
 	} 
@@ -1222,9 +1327,134 @@ void sibr::GaussianView::onGUI()
 		}
 	}
 	if (currMode == "Splats")
+
+	// if (updateDebugPixelLocation && updateWithMouse)
+	// {
+	// 	auto viewWindowPos = sibr::getImGuiWindowPosition("Point view");
+	// 	auto mousePos = ImGui::GetMousePos();
+	// 	debugMode.debugPixel[0] = mousePos.x - viewWindowPos.x;
+	// 	debugMode.debugPixel[1] = mousePos.y - viewWindowPos.y;
+	// }
+
 	{
 		ImGui::SliderFloat("Scaling Modifier", &_scalingModifier, 0.001f, 1.0f);
+
+		if (ImGui::CollapsingHeader("StopThePop", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			if (ImGui::BeginCombo("Sort Order", toString(splatting_settings.sort_settings.sort_order).c_str()))
+			{
+				if (ImGui::Selectable("VIEWSPACE_Z"))
+					splatting_settings.sort_settings.sort_order = CudaRasterizer::GlobalSortOrder::VIEWSPACE_Z;
+				if (ImGui::Selectable("DISTANCE"))
+					splatting_settings.sort_settings.sort_order = CudaRasterizer::GlobalSortOrder::DISTANCE;
+				if (ImGui::Selectable("PER_TILE_DEPTH_CENTER"))
+					splatting_settings.sort_settings.sort_order = CudaRasterizer::GlobalSortOrder::PER_TILE_DEPTH_CENTER;
+				if (ImGui::Selectable("PER_TILE_DEPTH_MAXPOS"))
+					splatting_settings.sort_settings.sort_order = CudaRasterizer::GlobalSortOrder::PER_TILE_DEPTH_MAXPOS;
+				ImGui::EndCombo();
+			}
+
+			if (ImGui::BeginCombo("Sort Mode", toString(splatting_settings.sort_settings.sort_mode).c_str()))
+			{
+				if (ImGui::Selectable("GLOBAL"))
+					splatting_settings.sort_settings.sort_mode = CudaRasterizer::SortMode::GLOBAL;
+				if (ImGui::Selectable("FULL SORT"))
+					splatting_settings.sort_settings.sort_mode = CudaRasterizer::SortMode::PER_PIXEL_FULL;
+				if (ImGui::Selectable("KBUFFER"))
+					splatting_settings.sort_settings.sort_mode = CudaRasterizer::SortMode::PER_PIXEL_KBUFFER;
+				if (ImGui::Selectable("HIERARCHICAL"))
+					splatting_settings.sort_settings.sort_mode = CudaRasterizer::SortMode::HIERARCHICAL;
+				ImGui::EndCombo();
+			}
+
+			if (splatting_settings.sort_settings.sort_mode == CudaRasterizer::SortMode::PER_PIXEL_KBUFFER)
+			{
+				if (ImGui::BeginCombo("Per-Pixel Queue Size", std::to_string(splatting_settings.sort_settings.queue_sizes.per_pixel).c_str()))
+				{
+					for (auto z : CudaRasterizer::per_pixel_queue_sizes){
+						if (ImGui::Selectable(std::to_string(z).c_str()))
+							splatting_settings.sort_settings.queue_sizes.per_pixel = z;
+					}
+					ImGui::EndCombo();
+				}
+			}
+
+			if (splatting_settings.sort_settings.sort_mode == CudaRasterizer::SortMode::HIERARCHICAL)
+			{
+				if (ImGui::BeginCombo("Per-Pixel Queue Size", std::to_string(splatting_settings.sort_settings.queue_sizes.per_pixel).c_str()))
+				{
+					for (auto z : CudaRasterizer::per_pixel_queue_sizes_hier){
+						if (ImGui::Selectable(std::to_string(z).c_str()))
+							splatting_settings.sort_settings.queue_sizes.per_pixel = z;
+					}
+					ImGui::EndCombo();
+				}
+
+				if (ImGui::BeginCombo("2x2 Tile Queue Size", std::to_string(splatting_settings.sort_settings.queue_sizes.tile_2x2).c_str()))
+				{
+					for (auto z : CudaRasterizer::twobytwo_tile_queue_sizes){
+						if (ImGui::Selectable(std::to_string(z).c_str()))
+							splatting_settings.sort_settings.queue_sizes.tile_2x2 = z;
+					}
+					ImGui::EndCombo();
+				}
+
+				ImGui::Checkbox("Hier. 4x4 Tile Culling", &splatting_settings.culling_settings.hierarchical_4x4_culling);
+			}
+
+
+			ImGui::Checkbox("Foveated Rendering", &splatting_settings.foveated_rendering);
+			ImGui::Checkbox("Rect Culling", &splatting_settings.culling_settings.rect_bounding);
+			ImGui::Checkbox("Opacity Culling", &splatting_settings.culling_settings.tight_opacity_bounding);
+			ImGui::Checkbox("Tile-based Culling", &splatting_settings.culling_settings.tile_based_culling);
+			ImGui::Checkbox("Load Balancing", &splatting_settings.load_balancing);
+			ImGui::Checkbox("Optimal Projection", &splatting_settings.optimal_projection);
+			ImGui::Checkbox("Proper EWA Scaling", &splatting_settings.proper_ewa_scaling);
+			ImGui::Checkbox("Blur", &blur);
+		}
+
+
+		if (ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			if (ImGui::BeginCombo("Debug Visualization", toString(debugMode.type).data()))
+			{
+				if (ImGui::Selectable("Disabled"))
+					debugMode.type = DebugVisualization::Disabled;
+				if (ImGui::Selectable("Sort Error: Opacity Weighted"))
+					debugMode.type = DebugVisualization::SortErrorOpacity;
+				if (ImGui::Selectable("Sort Error: Distance Weighted"))
+					debugMode.type = DebugVisualization::SortErrorDistance;
+				if (ImGui::Selectable("Gaussian Count Per Tile"))
+					debugMode.type = DebugVisualization::GaussianCountPerTile;
+				if (ImGui::Selectable("Gaussian Count Per Pixel"))
+					debugMode.type = DebugVisualization::GaussianCountPerPixel;
+				if (ImGui::Selectable("Depth"))
+					debugMode.type = DebugVisualization::Depth;
+				if (ImGui::Selectable("Transmittance"))
+					debugMode.type = DebugVisualization::Transmittance;
+				ImGui::EndCombo();
+			}
+
+			if (debugMode.type != DebugVisualization::Disabled)
+			{
+				ImGui::Checkbox("Manual Normalization", &debugMode.debug_normalize);
+				if (debugMode.debug_normalize)
+				{
+					ImGui::InputFloat2("Normalize Min/Max", debugMode.minMax);
+				}
+				ImGui::Checkbox("Input With Mouse", &updateWithMouse);
+				ImGui::InputInt2("Mouse Debug Pos", debugMode.debugPixel);
+			}
+
+			ImGui::Checkbox("Timing", &debugMode.timing_enabled);
+			if (debugMode.timing_enabled)
+				ImGui::Text("%s", (char*) debugMode.timings_text.c_str());
+			else
+				debugMode.timings_text = "";
+		}
+		
 	}
+	ImGui::End();
 
 	ImGui::Begin("Play");
 		ImGui::SliderFloat("FPS", &s_fps, 1.0f, 120.0f); // Add FPS slider
@@ -1257,6 +1487,9 @@ void sibr::GaussianView::onGUI()
 			need_download_q = std::queue<int>(); 
 			need_ready_q = std::queue<int>(); 
 			std::cout << "frame_id changed to " << frame_id << std::endl;
+			
+			// Reset tracker to force update
+			last_loaded_frame_id = -1;
 			
 			int group_index = 0;
 			if (num_frames > 0) { // Avoid division by zero if num_frames isn't set
@@ -1345,6 +1578,9 @@ void sibr::GaussianView::onGUI()
 		_multi_view_play.store(false);
 		cv_download.notify_all();
 		cv_ready.notify_all();
+
+		// Reset tracker on video switch
+		last_loaded_frame_id = -1;
 
 		std::cout << "Waiting for download thread to join..." << std::endl;
 		if (download_thread_.joinable()) {
@@ -1617,8 +1853,12 @@ sibr::GaussianView::~GaussianView()
 
 		cudaFree(view_cuda);
 		cudaFree(proj_cuda);
+		cudaFree(proj_inv_cuda);
 		cudaFree(cam_pos_cuda);
 		cudaFree(background_cuda);
+
+		for (int i = 0; i < 2; i++)
+			cudaFree(image_cuda_hier[i]);
 
 		if (!_interop_failed)
 		{

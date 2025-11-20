@@ -41,7 +41,9 @@
 #include <sys/sysinfo.h>
 #endif
 #include <fstream> // Added for PLY loading
-
+#include <stopthepop/rasterizer_debug.h>
+#include <rasterizer.h>
+#include <rasterizer_impl.h>
 #include "kernels.hpp"
 
 #define SEQUENCE_LENGTH 1000
@@ -113,6 +115,11 @@ namespace sibr {
 		 */
 		void onGUI() override;
 
+		/**
+		 * Parse json config.
+		 */
+		void parseJSON();
+
 		/** \return a reference to the scene */
 		const std::shared_ptr<sibr::BasicIBRScene> & getScene() const { return _scene; }
 
@@ -128,6 +135,17 @@ namespace sibr {
 
 	protected:
 
+		bool updateDebugPixelLocation{true};
+		bool updateWithMouse{true};
+		DebugVisualizationData debugMode{
+			DebugVisualization::Disabled, 0, 0, [](const DebugVisualizationData& instance, float value, float min, float max, float avg, float std) {
+				SIBR_LOG << toString(instance.type) << " for pixel (" << instance.debugPixel[0] << ", " << instance.debugPixel[1] <<
+										"): value=" << value << ", min=" << min << ", max=" << max << ", avg=" << avg << ", std=" << std << std::endl;
+			}
+		};
+
+		void initMaskCuda(const sibr::Camera& eye, int w, int h, uint32_t* contributing_tiles);
+
         /** Load static background Gaussians from a PLY file. */
         void loadBackground(const std::string& ply_path);
 		std:: string _background_ply_path; 
@@ -139,6 +157,8 @@ namespace sibr {
 		int frame_id = 0;
 		bool _fastCulling = true;
 		int _device = 0;
+
+		CudaRasterizer::SplattingSettings splatting_settings;
 		
 		// Thread safety and resource management
 		std::atomic<bool> _threads_initialized{false};
@@ -164,6 +184,14 @@ namespace sibr {
 		int* rect_cuda;
 		int P_array[SEQUENCE_LENGTH]; // Count for *dynamic* frames
 
+		float* mask_cuda = nullptr;
+		uint32_t* rangemap_cuda = nullptr;
+		uint32_t* visibility_mask_cuda = nullptr;
+		uint32_t* visibility_mask_sum_cuda = nullptr;
+		int _num_tiles;
+
+		GLuint imageBuffer = 0;
+
 		GpuFrameSlot gpu_ring_buffer[GPU_RING_BUFFER_SLOTS];
         cudaStream_t data_streams[GPU_RING_BUFFER_SLOTS];
         cudaEvent_t data_events[GPU_RING_BUFFER_SLOTS];
@@ -187,6 +215,9 @@ namespace sibr {
 
         cudaStream_t combine_stream = 0; // Stream for combining data
         cudaEvent_t combine_event = 0;   // Event to signal combination complete
+		cudaEvent_t render_read_done_event = 0; // Event to signal render read done
+
+		int last_loaded_frame_id = -1;
 	
 		// std::vector<cv::Mat> png_vector;
 		std::vector<std::vector<cv::Mat>> global_png_vector;
@@ -224,32 +255,49 @@ namespace sibr {
 		};
 
 		std:: vector<const char*> bg_paths = {
+
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
+
+			// "/home/riu/Desktop/point_cloud_2DGS.ply",
+			// "/home/riu/Desktop/point_cloud_VRsplat.ply",
+			"/home/riu/Desktop/VRSplat/pretrained_model/8d3728c8-0/point_cloud/iteration_30000/point_cloud.ply",
+			// "/home/riu/Desktop/VRSplat/pretrained_model/truck/point_cloud/iteration_35000/point_cloud.ply",
+			// "/home/riu/Desktop/point_cloud_3DGS_depth.ply",
+			// "/home/riu/Desktop/point_cloud_25GS.ply",
+
+			// "/home/riu/Desktop/point_cloud_vanilla3DGS.ply",
+
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
+
+
 			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/atc1_bg.ply",
-
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_a1b_clean.ply",
-
-
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
-			"/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
+			// "/home/riu/Desktop/VideoGSProject/datasets/point_cloud_837_clean.ply",
 
 		};
 
 		std:: vector<float> bg_scales = {
 			// 100.0f,
 			// 100.0f,
+			// 100.0f,
+			// 100.0f,
+			// 100.0f,
+			// 100.0f,
+			// 100.0f,
+
 			1.0f,
 			1.0f,
 			1.0f,
@@ -262,6 +310,13 @@ namespace sibr {
 		};
 
 		std:: vector<bool> anti_aliasings = {
+			// false,
+			// false,
+			// false,
+			// false,
+			// false,
+			// false,
+
 			true,
 			true,
 			true,
@@ -301,7 +356,6 @@ namespace sibr {
 		std::thread download_thread_;
 		std::thread ready_thread_;
 
-		GLuint imageBuffer = 0;
 		cudaGraphicsResource_t imageBufferCuda;
 
 		size_t allocdGeom = 0, allocdBinning = 0, allocdImg = 0;
@@ -310,8 +364,19 @@ namespace sibr {
 
 		float* view_cuda;
 		float* proj_cuda;
+		float* proj_inv_cuda;
 		float* cam_pos_cuda;
 		float* background_cuda;
+
+		bool blur = true;
+
+		std::pair<uint32_t*, uint32_t*> m_visibilityMask_fullres = { nullptr, nullptr };
+        std::pair<uint32_t*, uint32_t*> m_visibilityMask_halfres = { nullptr, nullptr };
+
+		float* image_cuda_hier[2];
+		float* image_cuda_tmp;
+
+		float* partial_proj_inv_cuda = nullptr;
 
 		float _scalingModifier = 1.0f;
 		GaussianData* gData;

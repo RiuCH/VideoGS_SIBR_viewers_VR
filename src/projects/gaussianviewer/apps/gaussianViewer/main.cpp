@@ -24,9 +24,6 @@
 #include <boost/filesystem.hpp>
 #include <regex>
 #include <imgui/imgui_internal.h>
-extern "C" {
-#include <libavutil/log.h>
-}
 
 namespace fs = boost::filesystem;
 
@@ -101,7 +98,6 @@ static void User_WriteAll(ImGuiContext* imgui_ctx, ImGuiSettingsHandler* handler
 
 int main(int ac, char** av) 
 {
-	av_log_set_level(AV_LOG_ERROR);
 	// Parse Command-line Args
 	CommandLineArgs::parseMainArgs(ac, av);
 	GaussianAppArgs myArgs;
@@ -139,19 +135,23 @@ int main(int ac, char** av)
 	window.loadSettings();
 
 	std::string cfgLine;
+	std::ifstream cfgFile(myArgs.modelPath.get() + "/cfg_args");
+	if (!cfgFile.good())
+	{
+		SIBR_ERR << "Could not find config file 'cfg_args' at " << myArgs.modelPath.get();
+	}
+	std::getline(cfgFile, cfgLine);
+
 	if (!myArgs.dataset_path.isInit())
 	{
-		std::ifstream cfgFile(myArgs.modelPath.get() + "/cfg_args");
-		if (!cfgFile.good())
-		{
-			SIBR_ERR << "Could not find config file 'cfg_args' at " << myArgs.modelPath.get();
-		}
-		std::getline(cfgFile, cfgLine);
 		auto rng = findArg(cfgLine, "source_path");
 		myArgs.dataset_path = cfgLine.substr(rng.first + 1, rng.second - rng.first - 2);
 	}
 
-	auto rng = findArg(cfgLine, "white_background");
+	auto rng = findArg(cfgLine, "sh_degree");
+	int sh_degree = std::stoi(cfgLine.substr(rng.first, rng.second - rng.first));
+
+	rng = findArg(cfgLine, "white_background");
 	bool white_background = cfgLine.substr(rng.first, rng.second - rng.first).find("True") != -1;
 
 	BasicIBRScene::SceneOptions myOpts;
@@ -183,7 +183,7 @@ int main(int ac, char** av)
 	}
 	else
 	{
-		plyfile += "/iteration_" + myArgs.iteration.get() + " / point_cloud.ply";
+		plyfile += "/iteration_" + myArgs.iteration.get() + "/point_cloud.ply";
 	}
 
 	// Setup the scene: load the proxy, create the texture arrays.
@@ -197,7 +197,7 @@ int main(int ac, char** av)
 
 	rendering_width = (rendering_width <= 0) ? std::min(1200U, scene_width) : rendering_width;
 	rendering_height = (rendering_height <= 0) ? std::min(1200U, scene_width) / scene_aspect_ratio : rendering_height;
-	if ((rendering_width > 0) && !myArgs.force_aspect_ratio ) {
+	if ((rendering_width > 0) && !myArgs.force_aspect_ratio && myArgs.rendering_mode != 2) {
 		if (abs(scene_aspect_ratio - rendering_aspect_ratio) > 0.001f) {
 			if (scene_width > scene_height) {
 				rendering_height = rendering_width / scene_aspect_ratio;
@@ -211,6 +211,11 @@ int main(int ac, char** av)
 
 	const unsigned int sceneResWidth = usedResolution.x();
 	const unsigned int sceneResHeight = usedResolution.y();
+
+	// set correct json file
+	std::string configfile =  myArgs.modelPath.get();
+	configfile += "/config.json";
+	scene->data()->configPath(configfile);
 
 	// Create the ULR view.
 	GaussianView::Ptr	gaussianView(new GaussianView(scene, sceneResWidth, sceneResHeight, plyfile.c_str(), &messageRead, white_background, !myArgs.noInterop, device));
@@ -251,7 +256,24 @@ int main(int ac, char** av)
 	multiViewManager.addSubView("Top view", topView, usedResolution);
 	CHECK_GL_ERROR;
 	topView->active(false);
+	
+	if (myArgs.profile)
+	{
+		sibr::Input::poll();
+		window.makeContextCurrent();
+		if (sibr::Input::global().key().isPressed(sibr::Key::Escape)) {
+			window.close();
+		}
 
+		multiViewManager.onUpdate(sibr::Input::global());
+		multiViewManager.onRender(window);
+
+		window.swapBuffer();
+		CHECK_GL_ERROR;
+
+
+		generalCamera->switchMode(InteractiveCameraHandler::InteractionMode::INTERPOLATION);
+	}
 	// save images
 	generalCamera->getCameraRecorder().setViewPath(gaussianView, myArgs.dataset_path.get());
 	if (myArgs.pathFile.get() !=  "" ) 

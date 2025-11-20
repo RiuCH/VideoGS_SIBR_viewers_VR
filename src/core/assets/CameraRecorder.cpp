@@ -460,8 +460,7 @@ namespace sibr
 			std::ostringstream ssZeroPad;
 			ssZeroPad << std::setw(8) << std::setfill('0') << i;
 			outFileName = outpathd + "/" +  ssZeroPad.str() + ".png";
-			// this is probably just unncessary
-			// std::cout << outFileName << " " << std::endl;
+			std::cout << outFileName << " " << std::endl;
 			view->onRenderIBR(*outFrame, _cameras[i]);
 			outFrame->readBack(*outImage);
 			outImage->save(outFileName, false);

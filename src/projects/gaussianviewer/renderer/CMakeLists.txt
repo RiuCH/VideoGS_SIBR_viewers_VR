@@ -15,9 +15,19 @@ project(sibr_${SIBR_PROJECT} LANGUAGES CXX CUDA)
 #	GIT_REPOSITORY 	"https://github.com/r4dl/StopThePop-Rasterization.git"
 #    GIT_TAG			"main"
 
+#sibr_gitlibrary(TARGET CudaRasterizer
+#    GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
+#    GIT_TAG			"255c532d5fd0c3d83afec0e8e49574b65ae381bd"
+#)
+
+#sibr_gitlibrary(TARGET CudaRasterizer
+#    GIT_REPOSITORY 	"https://github.com/Cekavis/VRSplat-Rasterization.git"
+#    GIT_TAG			"single_pass_foveated"
+#)
+
 sibr_gitlibrary(TARGET CudaRasterizer
-    GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
-    GIT_TAG			"255c532d5fd0c3d83afec0e8e49574b65ae381bd"
+    GIT_REPOSITORY 	"https://github.com/Cekavis/StopThePop-Optimal-Projection-Rasterization.git"
+    GIT_TAG			"main"
 )
 
 #sibr_gitlibrary(TARGET CudaRasterizer
@@ -67,6 +77,7 @@ target_link_libraries(${PROJECT_NAME}
 	CUDA::cudart
 	CUDA::nvml
 	CudaRasterizer
+	CUDA::nppig
 )
 else()
 target_link_libraries(${PROJECT_NAME}
@@ -88,6 +99,7 @@ target_link_libraries(${PROJECT_NAME}
 	CUDA::cudart
 	CUDA::nvml
 	CudaRasterizer
+	CUDA::nppig
 )
 endif()
 

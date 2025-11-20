@@ -274,24 +274,20 @@ namespace sibr
 		/** Set visibility mask
 		 * \param visibilityMask the visibility mask
 		 */
-		void				setVisibilityMaskFullres(std::pair<uint32_t*, uint32_t*> visibilityMask) { _visibilityMask_fullres = visibilityMask; }
-		/** Set halfres visibility mask
-		 * \param visibilityMask the visibility mask
-		 */
-		void				setVisibilityMaskHalfres(std::pair<uint32_t*, uint32_t*> visibilityMask) { _visibilityMask_halfres = visibilityMask; }
+		void				setVisibilityMask(std::pair<uint32_t*, uint32_t*> visibilityMask) { _visibilityMask = visibilityMask; }
 
 		/** \return the visibility mask */
-		std::pair<uint32_t*, uint32_t*>	visibilityMask( bool fullres ) const { return fullres ? _visibilityMask_fullres : _visibilityMask_halfres; }
+		std::pair<uint32_t*, uint32_t*>	visibilityMask( void ) const { return _visibilityMask; }
 
 		/** Set all field of view
 		 * \param all_fov the field of view
 		 */
-		void				setAllFov(const Eigen::Vector4f& all_fov) { _all_fov = all_fov; _sym=false; _dirtyViewProj = true; }
+		void				setAllFov(const Eigen::Vector4f& all_fov) { _all_fov = all_fov; _sym = false; _dirtyViewProj = true; }
 
 		/** \return the field of view */
 		const Eigen::Vector4f&	allFov( void ) const { return _all_fov; }
 
-		/** \return true if the camera is symmetrical */
+		/** \return if the camera is symmetrical */
 		bool isSym(void) const { return _sym; }
 		
 	protected:
@@ -316,10 +312,9 @@ namespace sibr
 		bool			_isOrtho; ///< Is the camera orthographic.
 
 		Transform3f     _rightTransform; ///< The pose of the right eye.
-		std::pair<uint32_t*, uint32_t*>	_visibilityMask_fullres = {nullptr, nullptr}; ///< Visibility mask.
-		std::pair<uint32_t*, uint32_t*>	_visibilityMask_halfres = {nullptr, nullptr}; ///< Visibility mask.
+		std::pair<uint32_t*, uint32_t*>	_visibilityMask; ///< Visibility mask.
 		Eigen::Vector4f _all_fov; ///< All the field of view
-		bool _sym; ///< If camera is symmetrical
+		bool			_sym; /// Are the fovs symmetrical.
 	};
 
 	/** Write a camera to a byte stream.
